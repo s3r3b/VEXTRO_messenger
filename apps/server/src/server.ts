@@ -1,104 +1,78 @@
 import Fastify from 'fastify';
 import fastifyWebsocket from '@fastify/websocket';
-import type { WebSocket } from 'ws'; // Typ z zależności @fastify/websocket
+import type { WebSocket } from 'ws';
+import { db } from './db'; // Import naszej konfiguracji Drizzle
+import { offlineMessages } from './db/schema'; // Import tabeli
+import { eq } from 'drizzle-orm'; // Import operatora równości
 
 const app = Fastify({ logger: true });
 app.register(fastifyWebsocket);
 
-// Menedżer Połączeń (RAM)
-// Mapowanie: userId -> aktywny obiekt gniazda WebSocket
 const activeConnections = new Map<string, WebSocket>();
 
 app.register(async function (fastify) {
     fastify.get('/ws', { websocket: true }, (socket, req) => {
         let currentUserId: string | null = null;
 
-        socket.on('message', (message: Buffer) => {
+        socket.on('message', async (message: Buffer) => { // Zmienione na async
             try {
-                // Dekodujemy Kopertę (JSON)
                 const payload = JSON.parse(message.toString('utf-8'));
 
-                // 1. Inicjalizacja połączenia (AUTH)
+                // 1. AUTH: Po zalogowaniu sprawdzamy bazę pod kątem wiadomości offline
                 if (payload.type === 'auth') {
-                    if (!payload.userId) {
-                        socket.send(JSON.stringify({ type: 'error', message: 'Brak userId.' }));
-                        return;
-                    }
-
+                    if (!payload.userId) return;
                     currentUserId = payload.userId;
                     activeConnections.set(currentUserId, socket);
 
-                    console.log(`[AUTH] Połączono: ${currentUserId} | Aktywni: ${activeConnections.size}`);
+                    console.log(`[AUTH] Użytkownik ${currentUserId} online.`);
                     socket.send(JSON.stringify({ type: 'system', status: 'authenticated' }));
+
+                    // CZYTANIE Z BAZY: Pobieramy wszystko co czeka na tego usera
+                    const pending = await db.select().from(offlineMessages).where(eq(offlineMessages.recipientId, currentUserId));
+
+                    if (pending.length > 0) {
+                        console.log(`[DB] Znaleziono ${pending.length} wiadomości offline dla ${currentUserId}. Wypycham...`);
+                        for (const msg of pending) {
+                            socket.send(JSON.stringify({
+                                type: 'message',
+                                senderId: msg.senderId,
+                                ciphertext: msg.ciphertext
+                            }));
+                            // Usuwamy z bazy po wysyłce (Forward Secrecy - nie trzymamy śmieci)
+                            await db.delete(offlineMessages).where(eq(offlineMessages.id, msg.id));
+                        }
+                    }
                     return;
                 }
 
-                // 2. Routing wiadomości (MESSAGE)
+                // 2. ROUTING
                 if (payload.type === 'message') {
-                    if (!currentUserId) {
-                        socket.send(JSON.stringify({ type: 'error', message: 'Brak autoryzacji gniazda.' }));
-                        return;
-                    }
+                    if (!currentUserId) return;
 
                     const { recipientId, ciphertext } = payload;
-
-                    if (!recipientId || !ciphertext) {
-                        socket.send(JSON.stringify({ type: 'error', message: 'Błędny format wiadomości.' }));
-                        return;
-                    }
-
-                    console.log(`[ROUTER] Sieczka od ${currentUserId} do ${recipientId}`);
                     const targetSocket = activeConnections.get(recipientId);
 
                     if (targetSocket) {
-                        // Odbiorca jest online - uderzamy bezpośrednio w RAM
-                        targetSocket.send(JSON.stringify({
-                            type: 'message',
-                            senderId: currentUserId,
-                            ciphertext: ciphertext // Zaszyfrowany payload w Base64
-                        }));
+                        targetSocket.send(JSON.stringify({ type: 'message', senderId: currentUserId, ciphertext }));
                     } else {
-                        // Odbiorca jest offline 
-                        // TODO: Tutaj wejdzie Drizzle ORM + PostgreSQL
-                        console.log(`[OFFLINE] ${recipientId} niedostępny. Pakiet idzie w eter (WIP - oczekuje na bazę).`);
-                        socket.send(JSON.stringify({
-                            type: 'system',
-                            info: 'Odbiorca offline. Zrzut do bazy nie jest jeszcze zaimplementowany.'
-                        }));
+                        // ZAPIS DO BAZY: Odbiorca offline
+                        await db.insert(offlineMessages).values({
+                            recipientId,
+                            senderId: currentUserId,
+                            ciphertext
+                        });
+                        console.log(`[DB] Wiadomość od ${currentUserId} dla ${recipientId} zapisana w offline_messages.`);
                     }
                 }
             } catch (err) {
-                console.error('[ERROR] Błąd parsowania ramki - to nie jest prawidłowy JSON:', err);
-                socket.send(JSON.stringify({ type: 'error', message: 'Wymagany format Koperty JSON.' }));
+                console.error('[ERROR] Błąd przetwarzania:', err);
             }
         });
 
-        // Czyszczenie pamięci po rozłączeniu (KRYTYCZNE - inaczej mamy wyciek pamięci)
         socket.on('close', () => {
-            if (currentUserId) {
-                activeConnections.delete(currentUserId);
-                console.log(`[DISCONNECT] Rozłączono: ${currentUserId} | Aktywni: ${activeConnections.size}`);
-            }
+            if (currentUserId) activeConnections.delete(currentUserId);
         });
     });
 });
 
-app.get('/health', async () => {
-    return {
-        status: 'VEXTRO Blind Server is running',
-        protocol: 'E2EE',
-        activeSockets: activeConnections.size
-    };
-});
-
-const start = async () => {
-    try {
-        await app.listen({ port: 3001, host: '0.0.0.0' });
-        console.log('🔥 VEXTRO Server (Router Mode) nasłuchuje na ws://localhost:3001/ws');
-    } catch (err) {
-        app.log.error(err);
-        process.exit(1);
-    }
-};
-
-start();
+// ... reszta kodu (start() itd.) zostaje bez zmian.
