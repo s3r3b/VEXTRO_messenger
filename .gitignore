@@ -1,0 +1,26 @@
+# =========================================================================
+# TYLKO PLIKI INSTALACYJNE, ZALEŻNOŚCI I CACHE (KOMENDY: pnpm/npm/yarn/npx)
+# Pliki typu package.json, pnpm-lock.yaml, yarn.lock SĄ BEZPIECZNE (będą pushowane)
+# =========================================================================
+
+# Główne katalogi pobieranych pakietów
+node_modules/
+
+# Pnpm cache i izolowane sklepy pakietów
+.pnpm-store/
+.pnpm-debug.log*
+
+# Yarn Plug'n'Play oraz lokalne stany instalacji
+.pnp
+.pnp.js
+.yarn/cache/
+.yarn/unplugged/
+.yarn/build-state.yml
+.yarn/install-state.gz
+yarn-debug.log*
+yarn-error.log*
+
+# Npm logi i pamięć podręczna archiwów
+npm-debug.log*
+logs/
+*.log

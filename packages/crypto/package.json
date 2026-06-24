@@ -1,0 +1,12 @@
+{
+  "name": "@vextro/crypto",
+  "version": "1.0.0",
+  "main": "src/index.ts",
+  "dependencies": {
+    "libsodium-wrappers": "^0.7.15"
+  },
+  "devDependencies": {
+    "@types/libsodium-wrappers": "^0.7.7",
+    "tsx": "^4.16.0"
+  }
+}
