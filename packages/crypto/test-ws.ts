@@ -13,7 +13,7 @@ class MockRAMStorage implements SecureStorageAdapter {
 }
 
 async function runNetworkTest() {
-    console.log("=== START TESTU SIECIOWEGO E2EE ===");
+    console.log("=== START TESTU ROUTINGU E2EE (KOPERTA JSON) ===");
 
     // 1. Inicjalizujemy uczestników
     const alice = new CryptoVault();
@@ -24,45 +24,85 @@ async function runNetworkTest() {
     await alice.generateIdentity();
     await bob.generateIdentity();
 
-    // 2. Łączymy się ze Ślepym Serwerem
-    const ws = new globalThis.WebSocket('ws://localhost:3001/ws');
+    // 2. Podłączamy Boba (Odbiorcę)
+    const wsBob = new globalThis.WebSocket('ws://localhost:3001/ws');
 
-    // Ważne: wymuszamy odbieranie surowych bajtów, nie jako string (blob)
-    ws.binaryType = 'arraybuffer';
+    // Zauważ, że usunąłem ws.binaryType = 'arraybuffer'. Teraz lecimy na stringach (JSON)
 
-    ws.onopen = async () => {
-        console.log("✅ Połączono ze Ślepym Serwerem!");
-
-        const message = "Tajne kody: Projekt VEXTRO działa przez sieć.";
-        console.log(`[ALICJA] Szyfruje: "${message}"`);
-
-        // Alicja szyfruje surową wiadomość używając klucza publicznego Boba
-        const encryptedBlob = await alice.encryptMessage(message, bob.publicKey!);
-
-        console.log(`[ALICJA] Wysyła paczkę E2EE (${encryptedBlob.length} bajtów) przez WebSocket...`);
-        ws.send(encryptedBlob);
+    wsBob.onopen = () => {
+        console.log("[BOB] Gniazdo otwarte. Wysyłam żądanie autoryzacji...");
+        wsBob.send(JSON.stringify({ type: 'auth', userId: 'bob' }));
     };
 
-    ws.onmessage = async (event) => {
-        // Serwer odbił wiadomość. Zamieniamy ArrayBuffer z powrotem na Uint8Array dla libsodium
-        const receivedData = new Uint8Array(event.data as ArrayBuffer);
-        console.log(`[SIEĆ] Odebrano paczkę z serwera: ${receivedData.length} bajtów`);
+    wsBob.onmessage = async (event) => {
+        const payload = JSON.parse(event.data as string);
 
-        try {
-            // Odbiorcą jest Bob. Próbuje on odszyfrować surowe bajty kluczem publicznym Alicji
-            const decrypted = await bob.decryptMessage(receivedData, alice.publicKey!);
-            console.log(`[BOB] Sukces! Odszyfrowano: "${decrypted}"`);
-            console.log("🔥 TEST SIECIOWY ZALICZONY: Architektura E2EE wymiata!");
-        } catch (e) {
-            console.error("❌ BŁĄD: Odszyfrowywanie z sieci zawiodło:", e);
+        // Krok 3: Bob zalogowany -> Podłączamy Alicję (Nadawcę)
+        if (payload.type === 'system' && payload.status === 'authenticated') {
+            console.log("[BOB] Autoryzacja udana. Czekam na wiadomości...\n");
+
+            const wsAlice = new globalThis.WebSocket('ws://localhost:3001/ws');
+
+            wsAlice.onopen = () => {
+                console.log("[ALICJA] Gniazdo otwarte. Wysyłam żądanie autoryzacji...");
+                wsAlice.send(JSON.stringify({ type: 'auth', userId: 'alice' }));
+            };
+
+            wsAlice.onmessage = async (aliceEvent) => {
+                const alicePayload = JSON.parse(aliceEvent.data as string);
+
+                // Krok 4: Alicja zalogowana -> Szyfruje i wysyła JSON-a
+                if (alicePayload.type === 'system' && alicePayload.status === 'authenticated') {
+                    console.log("[ALICJA] Autoryzacja udana.");
+
+                    const message = "Tajne kody: Projekt VEXTRO działa przez sieć z nowym routingiem!";
+                    console.log(`[ALICJA] Szyfruje: "${message}"`);
+
+                    const encryptedBlob = await alice.encryptMessage(message, bob.publicKey!);
+
+                    // KONWERSJA: Uint8Array -> Base64 (KRYTYCZNE DLA JSONA)
+                    const base64Ciphertext = Buffer.from(encryptedBlob).toString('base64');
+
+                    const envelope = {
+                        type: 'message',
+                        recipientId: 'bob', // Wskazujemy adresata dla Ślepego Serwera
+                        ciphertext: base64Ciphertext
+                    };
+
+                    console.log(`[ALICJA] Wysyła Kopertę JSON (${base64Ciphertext.length} znaków Base64)...`);
+                    wsAlice.send(JSON.stringify(envelope));
+                }
+            };
         }
 
-        // Kończymy test
-        ws.close();
+        // Krok 5: Bob odbiera zaszyfrowaną wiadomość i deszyfruje
+        if (payload.type === 'message') {
+            console.log(`\n[SIEĆ] Gniazdo Boba odebrało paczkę od: ${payload.senderId}`);
+
+            try {
+                // KONWERSJA: Base64 -> Uint8Array
+                const receivedData = new Uint8Array(Buffer.from(payload.ciphertext, 'base64'));
+
+                const decrypted = await bob.decryptMessage(receivedData, alice.publicKey!);
+                console.log(`[BOB] Sukces! Odszyfrowano: "${decrypted}"`);
+                console.log("🔥 TEST ROUTINGU ZALICZONY: Krypto-silnik + Serwer JSON wymiata!");
+
+                // Zamykamy wszystko bez żalu i wycieków pamięci
+                wsBob.close();
+                process.exit(0); // Wymuszamy zamknięcie procesu po udanym teście (wsAlice zamknie się w tle)
+            } catch (e) {
+                console.error("❌ BŁĄD: Odszyfrowywanie z sieci zawiodło:", e);
+                process.exit(1);
+            }
+        }
+
+        if (payload.type === 'error') {
+            console.error("[ERROR Z SERWERA]:", payload.message);
+        }
     };
 
-    ws.onerror = (error) => {
-        console.error("❌ Błąd połączenia WebSocket. Czy serwer na pewno działa?", error);
+    wsBob.onerror = (error) => {
+        console.error("❌ Błąd połączenia wsBob. Czy serwer Fastify na pewno działa?", error);
     };
 }
 

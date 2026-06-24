@@ -4,15 +4,20 @@
     "main": "src/server.ts",
     "scripts": {
         "dev": "tsx watch src/server.ts",
-        "start": "node dist/server.js"
+        "start": "node dist/server.js",
+        "db:push": "drizzle-kit push"
     },
     "dependencies": {
+        "@fastify/websocket": "^11.0.0",
+        "dotenv": "^17.4.2",
+        "drizzle-orm": "^0.45.2",
         "fastify": "^5.0.0",
-        "@fastify/websocket": "^11.0.0"
+        "postgres": "^3.4.9"
     },
     "devDependencies": {
+        "@types/node": "^22.0.0",
+        "drizzle-kit": "^0.31.10",
         "tsx": "^4.16.0",
-        "typescript": "^5.4.5",
-        "@types/node": "^22.0.0"
+        "typescript": "^5.4.5"
     }
 }
