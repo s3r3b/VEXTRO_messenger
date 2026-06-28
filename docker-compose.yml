@@ -1,0 +1,37 @@
+version: '3.8'
+
+services:
+  # Usługa serwera aplikacji
+  server:
+    build:
+      context: ./apps/server # Wskazuje na katalog z Dockerfile
+      dockerfile: Dockerfile
+    ports:
+      - "3001:3001" # Mapuje port 3001 z kontenera na port 3001 na Twoim komputerze
+    environment:
+      # Zmienne środowiskowe dla serwera, w tym do połączenia z bazą danych
+      # Upewnij się, że Twój kod (db.ts) odczytuje te zmienne!
+      DATABASE_URL: postgresql://user:password@db:5432/vextro_db
+    depends_on:
+      - db # Serwer uruchomi się dopiero po uruchomieniu bazy danych
+    networks:
+      - vextro-net
+
+  # Usługa bazy danych PostgreSQL
+  db:
+    image: postgres:15-alpine # Używamy oficjalnego obrazu Postgres
+    environment:
+      POSTGRES_DB: vextro_db
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data # Zapewnia trwałość danych bazy
+    networks:
+      - vextro-net
+
+volumes:
+  postgres_data:
+
+networks:
+  vextro-net:
+    driver: bridge
