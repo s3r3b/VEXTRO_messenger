@@ -2,9 +2,7 @@ version: '3.8'
 
 services:
   app:
-    # Bazowy obraz Debiana - resztę narzędzi wstrzyknie devcontainer.json
     image: mcr.microsoft.com/devcontainers/base:bookworm
-    # Usypiamy kontener, by działał w tle i czekał na połączenie z VS Code
     command: sleep infinity
     volumes:
       - .:/workspace:cached
@@ -16,8 +14,8 @@ services:
       - db
     networks:
       - vextro-net
-    # Konieczne, by pnpm nie wywalał błędów z prawami dostępu
-    user: node
+    # USUNIĘTO: user: node — ten użytkownik nie istnieje w tym obrazie.
+    # Domyślny user w mcr.microsoft.com/devcontainers/base:bookworm to "vscode"
 
   db:
     image: postgres:15-alpine
@@ -27,7 +25,6 @@ services:
       POSTGRES_USER: user
       POSTGRES_PASSWORD: password
     volumes:
-      # Inna nazwa wolumenu, żeby dev-baza nie gryzła się z danymi z kontenera produkcyjnego
       - postgres_data_dev:/var/lib/postgresql/data
     networks:
       - vextro-net

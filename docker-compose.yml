@@ -2,12 +2,9 @@ version: '3.8'
 
 services:
   app:
-    # Używamy potężnego, czystego Debiana jako bazy. Resztę narzędzi (Node, pnpm) wstrzyknie devcontainer.json
     image: mcr.microsoft.com/devcontainers/base:bookworm
-    # Usypiamy kontener, żeby nie zamknął się od razu po starcie. VS Code zaraz do niego wejdzie.
     command: sleep infinity
     volumes:
-      # Montujemy cały kod do /workspace. Zmiany w kodzie widać natychmiast, bez przebudowy.
       - .:/workspace:cached
     ports:
       - "3001:3001"
@@ -17,8 +14,7 @@ services:
       - db
     networks:
       - vextro-net
-    # Opcja niezbędna dla pnpm, unika problemów z uprawnieniami do symlinków na różnych systemach
-    user: node
+    # USUNIĘTO: user: node
 
   db:
     image: postgres:15-alpine
@@ -28,7 +24,6 @@ services:
       POSTGRES_USER: user
       POSTGRES_PASSWORD: password
     volumes:
-      # Zwróć uwagę - zmieniłem nazwę wolumenu, żeby nie gryzła się z produkcyjnym
       - postgres_data_dev:/var/lib/postgresql/data
     networks:
       - vextro-net

@@ -3,18 +3,15 @@
   "dockerComposeFile": "../docker-compose.dev.yml",
   "service": "app",
   "workspaceFolder": "/workspace",
-  
+
   "features": {
     "ghcr.io/devcontainers/features/node:1": {
-      "version": "24",
+      "version": "24.15.0",
       "pnpmVersion": "11.9.0"
     },
     "ghcr.io/devcontainers/features/rust:1": {
       "version": "latest",
       "profile": "minimal"
-    },
-    "ghcr.io/devcontainers/features/python:1": {
-      "version": "os-provided"
     }
   },
 
@@ -39,6 +36,7 @@
     }
   },
 
-  "remoteUser": "node",
+  // ZMIANA: "node" → "vscode" — to jest domyślny user w tym obrazie bazowym
+  "remoteUser": "vscode",
   "forwardPorts": [3001, 5432]
 }
