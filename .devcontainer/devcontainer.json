@@ -1,0 +1,44 @@
+{
+  "name": "VEXTRO E2EE Environment",
+  "dockerComposeFile": "../docker-compose.dev.yml",
+  "service": "app",
+  "workspaceFolder": "/workspace",
+  
+  "features": {
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "24",
+      "pnpmVersion": "11.9.0"
+    },
+    "ghcr.io/devcontainers/features/rust:1": {
+      "version": "latest",
+      "profile": "minimal"
+    },
+    "ghcr.io/devcontainers/features/python:1": {
+      "version": "os-provided"
+    }
+  },
+
+  "overrideCommand": false,
+
+  "postCreateCommand": "sudo apt-get update && sudo apt-get install -y build-essential make g++ && pnpm install",
+
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "terminal.integrated.defaultProfile.linux": "bash",
+        "editor.formatOnSave": true
+      },
+      "extensions": [
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode",
+        "ms-azuretools.vscode-docker",
+        "mtxr.sqltools",
+        "mtxr.sqltools-driver-pg",
+        "rust-lang.rust-analyzer"
+      ]
+    }
+  },
+
+  "remoteUser": "node",
+  "forwardPorts": [3001, 5432]
+}

@@ -1,0 +1,45 @@
+# ETAP 1: Budowanie (Builder)
+FROM node:24.15.0-alpine AS builder
+
+# Instalacja paczek systemowych potrzebnych do krypto (np. w przyszłości libsignal)
+RUN apk add --no-cache python3 make g++ 
+
+# Uruchomienie corepack i wymuszenie Twojej wersji pnpm
+RUN corepack enable && corepack prepare pnpm@11.9.0 --activate
+
+WORKDIR /usr/src/app
+
+# Kopiowanie szkieletu monorepo (bez kodu) aby optymalnie wykorzystać cache Dockera
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml turbo.json ./
+COPY apps/server/package.json ./apps/server/
+COPY packages/crypto/package.json ./packages/crypto/
+
+# Pobranie zależności dokładnie w takich wersjach, jakie masz w lockfile
+RUN pnpm install --frozen-lockfile
+
+# Skopiowanie reszty kodu źródłowego
+COPY . .
+
+# Zbudowanie aplikacji serwerowej przez Turbo
+RUN pnpm --filter @vextro/server build
+
+
+# ETAP 2: Produkcja (Runner)
+FROM node:24.15.0-alpine
+WORKDIR /usr/src/app
+
+RUN corepack enable && corepack prepare pnpm@11.9.0 --activate
+
+# Kopiujemy zdefiniowane workspace'y z poprzedniego etapu
+COPY --from=builder /usr/src/app/package.json /usr/src/app/pnpm-workspace.yaml /usr/src/app/pnpm-lock.yaml ./
+COPY --from=builder /usr/src/app/apps/server/package.json ./apps/server/
+COPY --from=builder /usr/src/app/packages/crypto/package.json ./packages/crypto/
+
+# Instalujemy TYLKO zależności produkcyjne - obraz będzie lekki i bezpieczny
+RUN pnpm install --prod --frozen-lockfile
+
+# Kopiujemy tylko skompilowany kod z etapu builder
+COPY --from=builder /usr/src/app/apps/server/dist ./apps/server/dist
+
+EXPOSE 3001
+CMD [ "node", "apps/server/dist/server.js" ]

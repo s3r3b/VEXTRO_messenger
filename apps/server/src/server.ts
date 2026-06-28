@@ -75,4 +75,16 @@ app.register(async function (fastify) {
     });
 });
 
-// ... reszta kodu (start() itd.) zostaje bez zmian.
+// === TUTAJ JEST BRAKUJĄCY BLOK URUCHAMIAJĄCY SERWER ===
+const start = async () => {
+    try {
+        // HOST 0.0.0.0 TO ABSOLUTNY WYMÓG W KONTENERZE!
+        await app.listen({ port: 3001, host: '0.0.0.0' });
+        console.log('🚀 [VEXTRO] Blind Server nasłuchuje na http://0.0.0.0:3001');
+    } catch (err) {
+        console.error('[CRITICAL] Błąd startu serwera:', err);
+        process.exit(1);
+    }
+};
+
+start();
