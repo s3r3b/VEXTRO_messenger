@@ -1,9 +1,9 @@
 import Fastify from 'fastify';
 import fastifyWebsocket from '@fastify/websocket';
 import type { WebSocket } from 'ws';
-import { db } from './db'; // Import naszej konfiguracji Drizzle
-import { offlineMessages } from './db/schema'; // Import tabeli
-import { eq } from 'drizzle-orm'; // Import operatora równości
+import { db } from './db';
+import { offlineMessages, identities, oneTimePrekeys } from './db/schema'; // NOWE TABELE
+import { eq } from 'drizzle-orm';
 
 const app = Fastify({ logger: true });
 app.register(fastifyWebsocket);
@@ -64,6 +64,95 @@ app.register(async function (fastify) {
                         console.log(`[DB] Wiadomość od ${currentUserId} dla ${recipientId} zapisana w offline_messages.`);
                     }
                 }
+                // 3. REJESTRACJA TOŻSAMOŚCI (PREKEY BUNDLE)
+                if (payload.type === 'register_bundle') {
+                    if (!currentUserId) return; // Wymaga uprzedniego auth
+                    const { bundle } = payload;
+                    
+                    try {
+                        // Używamy transakcji, żeby zapobiec uszkodzonym paczkom
+                        await db.transaction(async (tx) => {
+                            // 1. Zapis/Aktualizacja tożsamości głównej
+                            await tx.insert(identities).values({
+                                userId: currentUserId,
+                                identityKey: bundle.identityKey,
+                                signedPrekey: bundle.signedPrekey,
+                                signature: bundle.signature
+                            }).onConflictDoUpdate({
+                                target: identities.userId, // Wymaga unique/primary key na userId
+                                set: {
+                                    identityKey: bundle.identityKey,
+                                    signedPrekey: bundle.signedPrekey,
+                                    signature: bundle.signature,
+                                    updatedAt: new Date()
+                                }
+                            });
+
+                            // 2. Czyścimy stare OPK (jeśli to reinstalacja)
+                            await tx.delete(oneTimePrekeys).where(eq(oneTimePrekeys.userId, currentUserId));
+                            
+                            // 3. Batch insert nowych kluczy jednorazowych
+                            const opksToInsert = bundle.oneTimePrekeys.map((opk: any) => ({
+                                userId: currentUserId,
+                                keyId: opk.keyId,
+                                key: opk.key
+                            }));
+                            
+                            if (opksToInsert.length > 0) {
+                                await tx.insert(oneTimePrekeys).values(opksToInsert);
+                            }
+                        });
+                        
+                        console.log(`[KEY SERVER] Zarejestrowano paczkę kluczy dla: ${currentUserId}`);
+                        socket.send(JSON.stringify({ type: 'system', status: 'bundle_registered' }));
+                    } catch (err) {
+                        console.error('[DB ERROR] Błąd zapisu bundle:', err);
+                        socket.send(JSON.stringify({ type: 'error', message: 'Bundle registration failed' }));
+                    }
+                    return;
+                }
+
+                // 4. POBIERANIE PACZKI KLUCZY ROZMÓWCY (KEY DISTRIBUTION)
+                if (payload.type === 'request_bundle') {
+                    if (!currentUserId) return;
+                    const { targetUserId } = payload;
+
+                    try {
+                        // Pobieramy tożsamość i SPK
+                        const identityRecord = await db.select().from(identities).where(eq(identities.userId, targetUserId)).limit(1);
+                        
+                        if (identityRecord.length === 0) {
+                            socket.send(JSON.stringify({ type: 'error', message: 'Target user bundle not found' }));
+                            return;
+                        }
+
+                        // Pobieramy JEDEN klucz jednorazowy i bezwzględnie palimy go w bazie
+                        const opkRecords = await db.select().from(oneTimePrekeys).where(eq(oneTimePrekeys.userId, targetUserId)).limit(1);
+                        let opk = null;
+
+                        if (opkRecords.length > 0) {
+                            opk = { keyId: opkRecords[0].keyId, key: opkRecords[0].key };
+                            await db.delete(oneTimePrekeys).where(eq(oneTimePrekeys.id, opkRecords[0].id));
+                        }
+
+                        // Ślepy Serwer wysyła czysty payload. Odszyfrowanie i weryfikacja podpisu to problem klienta.
+                        socket.send(JSON.stringify({
+                            type: 'bundle_response',
+                            targetUserId,
+                            bundle: {
+                                identityKey: identityRecord[0].identityKey,
+                                signedPrekey: identityRecord[0].signedPrekey,
+                                signature: identityRecord[0].signature,
+                                oneTimePrekey: opk // X3DH mówi jasno: Jeśli pula OPK się wyczerpała (null), zjeżdżamy na sam SPK. System E2EE nie pada.
+                            }
+                        }));
+                        console.log(`[KEY SERVER] Wydano paczkę kluczy ${targetUserId} dla ${currentUserId}`);
+                    } catch (err) {
+                        console.error('[DB ERROR] Błąd wydawania bundle:', err);
+                    }
+                    return;
+                }
+
             } catch (err) {
                 console.error('[ERROR] Błąd przetwarzania:', err);
             }
