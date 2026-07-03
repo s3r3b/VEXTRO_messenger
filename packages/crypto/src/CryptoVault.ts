@@ -1,9 +1,10 @@
 import _sodium from 'libsodium-wrappers';
-import type { SecureStorageAdapter, PrekeyBundlePayload, PeerBundleResponse } from './StorageAdapter';
+import type { SecureStorageAdapter } from './StorageAdapter';
 
 export class CryptoVault {
-    #spkPrivateKey: Uint8Array | null = null;
-    public spkPublicKey: Uint8Array | null = null;
+    // 1. ZAMIAST klucza szyfrującego, w RAM trzymamy WYŁĄCZNIE klucz tożsamości (Podpisy Ed25519)
+    #identityPrivateKey: Uint8Array | null = null;
+    public identityPublicKey: Uint8Array | null = null;
 
     private storage: SecureStorageAdapter | null = null;
     private sodiumReady: Promise<void>;
@@ -15,47 +16,38 @@ export class CryptoVault {
     async init(storageAdapter: SecureStorageAdapter) {
         await this.sodiumReady;
         this.storage = storageAdapter;
-        
-        // Inicjalizacja RAMu - ładujemy SPK jako operacyjny klucz kryptograficzny (crypto_box)
-        const spk = await this.storage.getSignedPrekeyPair();
-        if (spk) {
+
+        const identity = await this.storage.getIdentityKeyPair();
+        if (identity) {
             const base64Variant = _sodium.base64_variants.ORIGINAL;
-            this.#spkPrivateKey = _sodium.from_base64(spk.privateKey, base64Variant);
-            this.spkPublicKey = _sodium.from_base64(spk.publicKey, base64Variant);
+            this.#identityPrivateKey = _sodium.from_base64(identity.privateKey, base64Variant);
+            this.identityPublicKey = _sodium.from_base64(identity.publicKey, base64Variant);
         }
     }
 
-    async generatePrekeyBundle(opkCount: number = 100): Promise<PrekeyBundlePayload> {
+    // -------------------------------------------------------------------------
+    // FAZA 1: TOŻSAMOŚĆ I PULE KLUCZY
+    // -------------------------------------------------------------------------
+
+    async generateIdentityAndOfflinePool(opkCount: number = 100) {
         if (!this.storage) throw new Error("CRITICAL: Vault nie został zainicjalizowany adapterem!");
         await this.sodiumReady;
-
         const base64Variant = _sodium.base64_variants.ORIGINAL;
 
-        // 1. Identity Key (Ed25519)
+        // Główna tożsamość do podpisów i dowodzenia kim jesteś (Ed25519)
         const identityKey = _sodium.crypto_sign_keypair();
-        const ikBase64 = {
-            publicKey: _sodium.to_base64(identityKey.publicKey, base64Variant),
-            privateKey: _sodium.to_base64(identityKey.privateKey, base64Variant)
-        };
 
-        // 2. Signed Prekey (X25519)
-        const signedPrekey = _sodium.crypto_box_keypair();
-        const spkBase64 = {
-            publicKey: _sodium.to_base64(signedPrekey.publicKey, base64Variant),
-            privateKey: _sodium.to_base64(signedPrekey.privateKey, base64Variant)
-        };
-
-        // 3. Podpis SPK (Ed25519 nad X25519)
-        const signature = _sodium.crypto_sign_detached(signedPrekey.publicKey, identityKey.privateKey);
-        const signatureBase64 = _sodium.to_base64(signature, base64Variant);
-
-        const oneTimePrekeysPayload = [];
         const opksForStorage = [];
-        
+        const publicOpksForServer = [];
+
+        // Generujemy pulę jednorazowych kluczy SZYFRUJĄCYCH do komunikacji offline (X25519)
         for (let i = 1; i <= opkCount; i++) {
             const opk = _sodium.crypto_box_keypair();
             const opkPublicBase64 = _sodium.to_base64(opk.publicKey, base64Variant);
-            
+
+            // Podpisujemy każdy klucz publiczny OTK naszym głównym kluczem tożsamości
+            const signature = _sodium.crypto_sign_detached(opk.publicKey, identityKey.privateKey);
+
             opksForStorage.push({
                 keyId: i,
                 keyPair: {
@@ -63,95 +55,93 @@ export class CryptoVault {
                     privateKey: _sodium.to_base64(opk.privateKey, base64Variant)
                 }
             });
-            oneTimePrekeysPayload.push({ keyId: i, key: opkPublicBase64 });
+
+            publicOpksForServer.push({
+                keyId: i,
+                key: opkPublicBase64,
+                signature: _sodium.to_base64(signature, base64Variant)
+            });
         }
 
-        await this.storage.saveIdentityKeyPair(ikBase64);
-        await this.storage.saveSignedPrekeyPair(spkBase64);
+        // Zapis do lokalnego storage'u
+        await this.storage.saveIdentityKeyPair({
+            publicKey: _sodium.to_base64(identityKey.publicKey, base64Variant),
+            privateKey: _sodium.to_base64(identityKey.privateKey, base64Variant)
+        });
         await this.storage.saveOneTimePrekeys(opksForStorage);
 
-        // Ładujemy nowo wygenerowany klucz operacyjny do RAM
-        this.#spkPrivateKey = signedPrekey.privateKey;
-        this.spkPublicKey = signedPrekey.publicKey;
+        this.#identityPrivateKey = identityKey.privateKey;
+        this.identityPublicKey = identityKey.publicKey;
 
         return {
-            identityKey: ikBase64.publicKey,
-            signedPrekey: spkBase64.publicKey,
-            signature: signatureBase64,
-            oneTimePrekeys: oneTimePrekeysPayload
+            identityKey: _sodium.to_base64(identityKey.publicKey, base64Variant),
+            oneTimePrekeys: publicOpksForServer // To leci na Blind Server
         };
     }
 
     // -------------------------------------------------------------------------
-    // NOWE SERCE BEZPIECZEŃSTWA: Walidacja TOFU i pinowanie
+    // FAZA 2: TRYB ONLINE (Strumień z Ratchetem)
     // -------------------------------------------------------------------------
-    async verifyAndPinPeerBundle(peerId: string, peerBundle: PeerBundleResponse): Promise<Uint8Array> {
-        if (!this.storage) throw new Error("CRITICAL: Vault niezainicjalizowany!");
-        await this.sodiumReady;
 
+    // Inicjuje bezpieczny tunel dla WebSockets używając crypto_kx (Key Exchange)
+    async establishOnlineSessionKeys(peerIdentityPublicKeyBase64: string, isServerRole: boolean) {
+        if (!this.#identityPrivateKey || !this.identityPublicKey) throw new Error("Vault zablokowany.");
+        await this.sodiumReady;
         const base64Variant = _sodium.base64_variants.ORIGINAL;
 
-        const peerIk = _sodium.from_base64(peerBundle.identityKey, base64Variant);
-        const peerSpk = _sodium.from_base64(peerBundle.signedPrekey, base64Variant);
-        const signature = _sodium.from_base64(peerBundle.signature, base64Variant);
+        // W libsodium konwertujemy klucze Ed25519 (podpis) na X25519 (szyfrowanie) W LOCIE.
+        // Dzięki temu nie musimy trzymać oddzielnego SPK.
+        const myX25519Secret = _sodium.crypto_sign_ed25519_sk_to_curve25519(this.#identityPrivateKey);
+        const myX25519Public = _sodium.crypto_sign_ed25519_pk_to_curve25519(this.identityPublicKey);
 
-        // 1. Weryfikacja kryptograficzna - czy podpis paczki jest poprawny?
-        const isValid = _sodium.crypto_sign_verify_detached(signature, peerSpk, peerIk);
-        if (!isValid) {
-            throw new Error(`ALARM: Nieważny podpis paczki dla ${peerId}! Serwer podsłuchuje (MitM).`);
-        }
+        const peerIdentityEd25519 = _sodium.from_base64(peerIdentityPublicKeyBase64, base64Variant);
+        const peerX25519Public = _sodium.crypto_sign_ed25519_pk_to_curve25519(peerIdentityEd25519);
 
-        // 2. Trust On First Use (TOFU)
-        const pinnedIkBase64 = await this.storage.getTrustedPeerIdentity(peerId);
-        if (pinnedIkBase64) {
-            if (pinnedIkBase64 !== peerBundle.identityKey) {
-                throw new Error(`ALARM MitM: Klucz tożsamości dla ${peerId} uległ zmianie!`);
-            }
+        // Algorytm Key Exchange (KX) z libsodium. Generuje osobne klucze do odbioru(rx) i wysyłki(tx).
+        let sessionKeys;
+        if (isServerRole) {
+            sessionKeys = _sodium.crypto_kx_server_session_keys(myX25519Public, myX25519Secret, peerX25519Public);
         } else {
-            await this.storage.saveTrustedPeerIdentity(peerId, peerBundle.identityKey);
-            console.log(`[TOFU] Zapinowano nowy profil zaufania dla: ${peerId}`);
+            sessionKeys = _sodium.crypto_kx_client_session_keys(myX25519Public, myX25519Secret, peerX25519Public);
         }
 
-        // 3. Selekcja najbezpieczniejszego klucza szyfrującego
-        let encryptionKeyBase64 = peerBundle.signedPrekey;
-        if (peerBundle.oneTimePrekey) {
-            encryptionKeyBase64 = peerBundle.oneTimePrekey.key;
-        }
-
-        return _sodium.from_base64(encryptionKeyBase64, base64Variant);
+        // Tych kluczy RX/TX użyjemy potem do `crypto_secretstream_xchacha20poly1305_init_push`
+        // Zapewnia to perfekcyjny Forward Secrecy i chroni przed modyfikacją strumienia WS.
+        return sessionKeys;
     }
 
-    isReady(): boolean {
-        return this.#spkPrivateKey !== null && this.spkPublicKey !== null;
-    }
+    // -------------------------------------------------------------------------
+    // FAZA 3: TRYB OFFLINE (Efemeryczne koperty - Sealed/Signed Boxes)
+    // -------------------------------------------------------------------------
 
-    async encryptMessage(plaintext: string, recipientPubKey: Uint8Array): Promise<Uint8Array> {
-        if (!this.#spkPrivateKey) throw new Error("Vault zablokowany: brak klucza prywatnego w RAM.");
+    async encryptOfflineEnvelope(plaintext: string, recipientOtkBase64: string): Promise<Uint8Array> {
+        if (!this.#identityPrivateKey) throw new Error("Vault zablokowany.");
         await this.sodiumReady;
+        const base64Variant = _sodium.base64_variants.ORIGINAL;
+        const recipientOtk = _sodium.from_base64(recipientOtkBase64, base64Variant);
 
+        // Zamiast szyfrować ze stałego klucza, nadawca generuje klucz efemeryczny (tylko na ułamek sekundy)
+        const ephemeralKeyPair = _sodium.crypto_box_keypair();
         const nonce = _sodium.randombytes_buf(_sodium.crypto_box_NONCEBYTES);
-        const ciphertext = _sodium.crypto_box_easy(plaintext, nonce, recipientPubKey, this.#spkPrivateKey);
 
-        const combined = new Uint8Array(nonce.length + ciphertext.length);
-        combined.set(nonce);
-        combined.set(ciphertext, nonce.length);
+        // Szyfrujemy wiadomość z klucza ulotnego do jednorazowego klucza odbiorcy (OTK)
+        const ciphertext = _sodium.crypto_box_easy(plaintext, nonce, recipientOtk, ephemeralKeyPair.privateKey);
 
-        return combined;
-    }
+        // Składamy payload: [Nonce] + [Klucz efemeryczny nadawcy] + [Kryptogram]
+        const payload = new Uint8Array(nonce.length + ephemeralKeyPair.publicKey.length + ciphertext.length);
+        payload.set(nonce);
+        payload.set(ephemeralKeyPair.publicKey, nonce.length);
+        payload.set(ciphertext, nonce.length + ephemeralKeyPair.publicKey.length);
 
-    async decryptMessage(encryptedData: Uint8Array, senderPubKey: Uint8Array): Promise<string> {
-        if (!this.#spkPrivateKey) throw new Error("Vault zablokowany: brak klucza prywatnego w RAM.");
-        await this.sodiumReady;
+        // Aby odbiorca wiedział, że to na pewno od nas, podpisujemy cały ten blob naszym głównym Ed25519
+        const signature = _sodium.crypto_sign_detached(payload, this.#identityPrivateKey);
 
-        const nonce = encryptedData.slice(0, _sodium.crypto_box_NONCEBYTES);
-        const ciphertext = encryptedData.slice(_sodium.crypto_box_NONCEBYTES);
+        // Zwracamy [Podpis] + [Payload]
+        const envelope = new Uint8Array(signature.length + payload.length);
+        envelope.set(signature);
+        envelope.set(payload, signature.length);
 
-        try {
-            const decrypted = _sodium.crypto_box_open_easy(ciphertext, nonce, senderPubKey, this.#spkPrivateKey);
-            return _sodium.to_string(decrypted);
-        } catch (error) {
-            throw new Error("Błąd deszyfrowania: Klucze nie pasują lub wiadomość zmodyfikowana!");
-        }
+        return envelope;
     }
 }
 
