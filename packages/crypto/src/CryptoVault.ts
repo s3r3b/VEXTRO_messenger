@@ -1,148 +1,152 @@
-import _sodium from 'libsodium-wrappers';
-import type { SecureStorageAdapter } from './StorageAdapter';
+import Fastify from 'fastify';
+import fastifyWebsocket from '@fastify/websocket';
+import type { WebSocket } from 'ws';
+import { db } from './db';
+import { offlineMessages, identities, oneTimePrekeys } from './db/schema';
+import { eq } from 'drizzle-orm';
 
-export class CryptoVault {
-    // 1. ZAMIAST klucza szyfrującego, w RAM trzymamy WYŁĄCZNIE klucz tożsamości (Podpisy Ed25519)
-    #identityPrivateKey: Uint8Array | null = null;
-    public identityPublicKey: Uint8Array | null = null;
+const app = Fastify({ logger: true });
+app.register(fastifyWebsocket);
 
-    private storage: SecureStorageAdapter | null = null;
-    private sodiumReady: Promise<void>;
+const activeConnections = new Map<string, WebSocket>();
 
-    constructor() {
-        this.sodiumReady = _sodium.ready;
-    }
+app.register(async function (fastify) {
+    fastify.get('/ws', { websocket: true }, (socket, req) => {
+        let currentUserId: string | null = null;
 
-    async init(storageAdapter: SecureStorageAdapter) {
-        await this.sodiumReady;
-        this.storage = storageAdapter;
+        socket.on('message', async (message: Buffer) => {
+            try {
+                const payload = JSON.parse(message.toString('utf-8'));
 
-        const identity = await this.storage.getIdentityKeyPair();
-        if (identity) {
-            const base64Variant = _sodium.base64_variants.ORIGINAL;
-            this.#identityPrivateKey = _sodium.from_base64(identity.privateKey, base64Variant);
-            this.identityPublicKey = _sodium.from_base64(identity.publicKey, base64Variant);
-        }
-    }
+                // 1. AUTH & BUFOR OFFLINE
+                if (payload.type === 'auth') {
+                    if (!payload.userId) return;
+                    currentUserId = payload.userId;
+                    activeConnections.set(currentUserId, socket);
 
-    // -------------------------------------------------------------------------
-    // FAZA 1: TOŻSAMOŚĆ I PULE KLUCZY
-    // -------------------------------------------------------------------------
+                    console.log(`[AUTH] Użytkownik ${currentUserId} online.`);
+                    socket.send(JSON.stringify({ type: 'system', status: 'authenticated' }));
 
-    async generateIdentityAndOfflinePool(opkCount: number = 100) {
-        if (!this.storage) throw new Error("CRITICAL: Vault nie został zainicjalizowany adapterem!");
-        await this.sodiumReady;
-        const base64Variant = _sodium.base64_variants.ORIGINAL;
-
-        // Główna tożsamość do podpisów i dowodzenia kim jesteś (Ed25519)
-        const identityKey = _sodium.crypto_sign_keypair();
-
-        const opksForStorage = [];
-        const publicOpksForServer = [];
-
-        // Generujemy pulę jednorazowych kluczy SZYFRUJĄCYCH do komunikacji offline (X25519)
-        for (let i = 1; i <= opkCount; i++) {
-            const opk = _sodium.crypto_box_keypair();
-            const opkPublicBase64 = _sodium.to_base64(opk.publicKey, base64Variant);
-
-            // Podpisujemy każdy klucz publiczny OTK naszym głównym kluczem tożsamości
-            const signature = _sodium.crypto_sign_detached(opk.publicKey, identityKey.privateKey);
-
-            opksForStorage.push({
-                keyId: i,
-                keyPair: {
-                    publicKey: opkPublicBase64,
-                    privateKey: _sodium.to_base64(opk.privateKey, base64Variant)
+                    const pending = await db.select().from(offlineMessages).where(eq(offlineMessages.recipientId, currentUserId));
+                    if (pending.length > 0) {
+                        for (const msg of pending) {
+                            socket.send(JSON.stringify({ type: 'message', senderId: msg.senderId, ciphertext: msg.ciphertext }));
+                            await db.delete(offlineMessages).where(eq(offlineMessages.id, msg.id));
+                        }
+                    }
+                    return;
                 }
-            });
 
-            publicOpksForServer.push({
-                keyId: i,
-                key: opkPublicBase64,
-                signature: _sodium.to_base64(signature, base64Variant)
-            });
-        }
+                // 2. ROUTING KOPERT (MATRIOSZEK)
+                if (payload.type === 'message') {
+                    if (!currentUserId) return;
+                    const { recipientId, ciphertext } = payload;
+                    const targetSocket = activeConnections.get(recipientId);
 
-        // Zapis do lokalnego storage'u
-        await this.storage.saveIdentityKeyPair({
-            publicKey: _sodium.to_base64(identityKey.publicKey, base64Variant),
-            privateKey: _sodium.to_base64(identityKey.privateKey, base64Variant)
+                    if (targetSocket) {
+                        targetSocket.send(JSON.stringify({ type: 'message', senderId: currentUserId, ciphertext }));
+                    } else {
+                        await db.insert(offlineMessages).values({ recipientId, senderId: currentUserId, ciphertext });
+                        console.log(`[DB] Zrzut offline dla ${recipientId}.`);
+                    }
+                    return;
+                }
+
+                // 3. REJESTRACJA TOŻSAMOŚCI (PREKEY BUNDLE)
+                if (payload.type === 'register_bundle') {
+                    if (!currentUserId) return;
+                    const { bundle } = payload;
+                    
+                    try {
+                        await db.transaction(async (tx) => {
+                            await tx.insert(identities).values({
+                                userId: currentUserId!,
+                                identityKey: bundle.identityKey,
+                                signedPrekey: bundle.signedPrekey,
+                                signature: bundle.signature
+                            }).onConflictDoUpdate({
+                                target: identities.userId,
+                                set: {
+                                    identityKey: bundle.identityKey,
+                                    signedPrekey: bundle.signedPrekey,
+                                    signature: bundle.signature,
+                                    updatedAt: new Date()
+                                }
+                            });
+
+                            await tx.delete(oneTimePrekeys).where(eq(oneTimePrekeys.userId, currentUserId!));
+                            
+                            const opksToInsert = bundle.oneTimePrekeys.map((opk: any) => ({
+                                userId: currentUserId!,
+                                keyId: opk.keyId,
+                                key: opk.key
+                            }));
+                            
+                            if (opksToInsert.length > 0) {
+                                await tx.insert(oneTimePrekeys).values(opksToInsert);
+                            }
+                        });
+                        console.log(`[KEY SERVER] Zarejestrowano paczkę dla: ${currentUserId}`);
+                        socket.send(JSON.stringify({ type: 'system', status: 'bundle_registered' }));
+                    } catch (err) {
+                        console.error('[DB ERROR] Błąd zapisu bundle:', err);
+                    }
+                    return;
+                }
+
+                // 4. WYDAWANIE PACZKI KLUCZY (KEY DISTRIBUTION)
+                if (payload.type === 'request_bundle') {
+                    if (!currentUserId) return;
+                    const { targetUserId } = payload;
+
+                    try {
+                        const identityRecord = await db.select().from(identities).where(eq(identities.userId, targetUserId)).limit(1);
+                        if (identityRecord.length === 0) return;
+
+                        const opkRecords = await db.select().from(oneTimePrekeys).where(eq(oneTimePrekeys.userId, targetUserId)).limit(1);
+                        let opk = null;
+
+                        if (opkRecords.length > 0) {
+                            opk = { keyId: opkRecords[0].keyId, key: opkRecords[0].key };
+                            await db.delete(oneTimePrekeys).where(eq(oneTimePrekeys.id, opkRecords[0].id));
+                        }
+
+                        socket.send(JSON.stringify({
+                            type: 'bundle_response',
+                            targetUserId,
+                            bundle: {
+                                identityKey: identityRecord[0].identityKey,
+                                signedPrekey: identityRecord[0].signedPrekey,
+                                signature: identityRecord[0].signature,
+                                oneTimePrekey: opk
+                            }
+                        }));
+                        console.log(`[KEY SERVER] Wydano paczkę kluczy ${targetUserId} dla ${currentUserId}`);
+                    } catch (err) {
+                        console.error('[DB ERROR] Błąd wydawania bundle:', err);
+                    }
+                    return;
+                }
+
+            } catch (err) {
+                console.error('[ERROR] Błąd przetwarzania:', err);
+            }
         });
-        await this.storage.saveOneTimePrekeys(opksForStorage);
 
-        this.#identityPrivateKey = identityKey.privateKey;
-        this.identityPublicKey = identityKey.publicKey;
+        socket.on('close', () => {
+            if (currentUserId) activeConnections.delete(currentUserId);
+        });
+    });
+});
 
-        return {
-            identityKey: _sodium.to_base64(identityKey.publicKey, base64Variant),
-            oneTimePrekeys: publicOpksForServer // To leci na Blind Server
-        };
+const start = async () => {
+    try {
+        await app.listen({ port: 3001, host: '0.0.0.0' });
+        console.log('🚀 [VEXTRO] Blind Server nasłuchuje na http://0.0.0.0:3001');
+    } catch (err) {
+        console.error('[CRITICAL] Błąd startu serwera:', err);
+        process.exit(1);
     }
+};
 
-    // -------------------------------------------------------------------------
-    // FAZA 2: TRYB ONLINE (Strumień z Ratchetem)
-    // -------------------------------------------------------------------------
-
-    // Inicjuje bezpieczny tunel dla WebSockets używając crypto_kx (Key Exchange)
-    async establishOnlineSessionKeys(peerIdentityPublicKeyBase64: string, isServerRole: boolean) {
-        if (!this.#identityPrivateKey || !this.identityPublicKey) throw new Error("Vault zablokowany.");
-        await this.sodiumReady;
-        const base64Variant = _sodium.base64_variants.ORIGINAL;
-
-        // W libsodium konwertujemy klucze Ed25519 (podpis) na X25519 (szyfrowanie) W LOCIE.
-        // Dzięki temu nie musimy trzymać oddzielnego SPK.
-        const myX25519Secret = _sodium.crypto_sign_ed25519_sk_to_curve25519(this.#identityPrivateKey);
-        const myX25519Public = _sodium.crypto_sign_ed25519_pk_to_curve25519(this.identityPublicKey);
-
-        const peerIdentityEd25519 = _sodium.from_base64(peerIdentityPublicKeyBase64, base64Variant);
-        const peerX25519Public = _sodium.crypto_sign_ed25519_pk_to_curve25519(peerIdentityEd25519);
-
-        // Algorytm Key Exchange (KX) z libsodium. Generuje osobne klucze do odbioru(rx) i wysyłki(tx).
-        let sessionKeys;
-        if (isServerRole) {
-            sessionKeys = _sodium.crypto_kx_server_session_keys(myX25519Public, myX25519Secret, peerX25519Public);
-        } else {
-            sessionKeys = _sodium.crypto_kx_client_session_keys(myX25519Public, myX25519Secret, peerX25519Public);
-        }
-
-        // Tych kluczy RX/TX użyjemy potem do `crypto_secretstream_xchacha20poly1305_init_push`
-        // Zapewnia to perfekcyjny Forward Secrecy i chroni przed modyfikacją strumienia WS.
-        return sessionKeys;
-    }
-
-    // -------------------------------------------------------------------------
-    // FAZA 3: TRYB OFFLINE (Efemeryczne koperty - Sealed/Signed Boxes)
-    // -------------------------------------------------------------------------
-
-    async encryptOfflineEnvelope(plaintext: string, recipientOtkBase64: string): Promise<Uint8Array> {
-        if (!this.#identityPrivateKey) throw new Error("Vault zablokowany.");
-        await this.sodiumReady;
-        const base64Variant = _sodium.base64_variants.ORIGINAL;
-        const recipientOtk = _sodium.from_base64(recipientOtkBase64, base64Variant);
-
-        // Zamiast szyfrować ze stałego klucza, nadawca generuje klucz efemeryczny (tylko na ułamek sekundy)
-        const ephemeralKeyPair = _sodium.crypto_box_keypair();
-        const nonce = _sodium.randombytes_buf(_sodium.crypto_box_NONCEBYTES);
-
-        // Szyfrujemy wiadomość z klucza ulotnego do jednorazowego klucza odbiorcy (OTK)
-        const ciphertext = _sodium.crypto_box_easy(plaintext, nonce, recipientOtk, ephemeralKeyPair.privateKey);
-
-        // Składamy payload: [Nonce] + [Klucz efemeryczny nadawcy] + [Kryptogram]
-        const payload = new Uint8Array(nonce.length + ephemeralKeyPair.publicKey.length + ciphertext.length);
-        payload.set(nonce);
-        payload.set(ephemeralKeyPair.publicKey, nonce.length);
-        payload.set(ciphertext, nonce.length + ephemeralKeyPair.publicKey.length);
-
-        // Aby odbiorca wiedział, że to na pewno od nas, podpisujemy cały ten blob naszym głównym Ed25519
-        const signature = _sodium.crypto_sign_detached(payload, this.#identityPrivateKey);
-
-        // Zwracamy [Podpis] + [Payload]
-        const envelope = new Uint8Array(signature.length + payload.length);
-        envelope.set(signature);
-        envelope.set(payload, signature.length);
-
-        return envelope;
-    }
-}
-
-export const vault = new CryptoVault();
+start();
