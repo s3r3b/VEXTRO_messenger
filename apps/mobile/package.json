@@ -1,9 +1,12 @@
 {
-  "name": "mobile",
+  "name": "@vextro/mobile",
   "version": "1.0.0",
   "main": "index.ts",
   "dependencies": {
+    "@react-native-async-storage/async-storage": "^3.1.1",
+    "@vextro/crypto": "workspace:*",
     "expo": "~57.0.2",
+    "expo-secure-store": "^57.0.0",
     "expo-status-bar": "~57.0.0",
     "react": "19.2.3",
     "react-native": "0.86.0"

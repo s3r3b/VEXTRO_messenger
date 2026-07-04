@@ -1,152 +1,171 @@
-import Fastify from 'fastify';
-import fastifyWebsocket from '@fastify/websocket';
-import type { WebSocket } from 'ws';
-import { db } from './db';
-import { offlineMessages, identities, oneTimePrekeys } from './db/schema';
-import { eq } from 'drizzle-orm';
+import _sodium from 'libsodium-wrappers';
+import type { SecureStorageAdapter, PrekeyBundlePayload, PeerBundleResponse } from './StorageAdapter';
 
-const app = Fastify({ logger: true });
-app.register(fastifyWebsocket);
+export class CryptoVault {
+    // Używamy Signed Prekey (SPK) jako operacyjnego klucza do rutynowego E2EE
+    #spkPrivateKey: Uint8Array | null = null;
+    public spkPublicKey: Uint8Array | null = null;
 
-const activeConnections = new Map<string, WebSocket>();
+    private storage: SecureStorageAdapter | null = null;
+    private sodiumReady: Promise<void>;
 
-app.register(async function (fastify) {
-    fastify.get('/ws', { websocket: true }, (socket, req) => {
-        let currentUserId: string | null = null;
-
-        socket.on('message', async (message: Buffer) => {
-            try {
-                const payload = JSON.parse(message.toString('utf-8'));
-
-                // 1. AUTH & BUFOR OFFLINE
-                if (payload.type === 'auth') {
-                    if (!payload.userId) return;
-                    currentUserId = payload.userId;
-                    activeConnections.set(currentUserId, socket);
-
-                    console.log(`[AUTH] Użytkownik ${currentUserId} online.`);
-                    socket.send(JSON.stringify({ type: 'system', status: 'authenticated' }));
-
-                    const pending = await db.select().from(offlineMessages).where(eq(offlineMessages.recipientId, currentUserId));
-                    if (pending.length > 0) {
-                        for (const msg of pending) {
-                            socket.send(JSON.stringify({ type: 'message', senderId: msg.senderId, ciphertext: msg.ciphertext }));
-                            await db.delete(offlineMessages).where(eq(offlineMessages.id, msg.id));
-                        }
-                    }
-                    return;
-                }
-
-                // 2. ROUTING KOPERT (MATRIOSZEK)
-                if (payload.type === 'message') {
-                    if (!currentUserId) return;
-                    const { recipientId, ciphertext } = payload;
-                    const targetSocket = activeConnections.get(recipientId);
-
-                    if (targetSocket) {
-                        targetSocket.send(JSON.stringify({ type: 'message', senderId: currentUserId, ciphertext }));
-                    } else {
-                        await db.insert(offlineMessages).values({ recipientId, senderId: currentUserId, ciphertext });
-                        console.log(`[DB] Zrzut offline dla ${recipientId}.`);
-                    }
-                    return;
-                }
-
-                // 3. REJESTRACJA TOŻSAMOŚCI (PREKEY BUNDLE)
-                if (payload.type === 'register_bundle') {
-                    if (!currentUserId) return;
-                    const { bundle } = payload;
-                    
-                    try {
-                        await db.transaction(async (tx) => {
-                            await tx.insert(identities).values({
-                                userId: currentUserId!,
-                                identityKey: bundle.identityKey,
-                                signedPrekey: bundle.signedPrekey,
-                                signature: bundle.signature
-                            }).onConflictDoUpdate({
-                                target: identities.userId,
-                                set: {
-                                    identityKey: bundle.identityKey,
-                                    signedPrekey: bundle.signedPrekey,
-                                    signature: bundle.signature,
-                                    updatedAt: new Date()
-                                }
-                            });
-
-                            await tx.delete(oneTimePrekeys).where(eq(oneTimePrekeys.userId, currentUserId!));
-                            
-                            const opksToInsert = bundle.oneTimePrekeys.map((opk: any) => ({
-                                userId: currentUserId!,
-                                keyId: opk.keyId,
-                                key: opk.key
-                            }));
-                            
-                            if (opksToInsert.length > 0) {
-                                await tx.insert(oneTimePrekeys).values(opksToInsert);
-                            }
-                        });
-                        console.log(`[KEY SERVER] Zarejestrowano paczkę dla: ${currentUserId}`);
-                        socket.send(JSON.stringify({ type: 'system', status: 'bundle_registered' }));
-                    } catch (err) {
-                        console.error('[DB ERROR] Błąd zapisu bundle:', err);
-                    }
-                    return;
-                }
-
-                // 4. WYDAWANIE PACZKI KLUCZY (KEY DISTRIBUTION)
-                if (payload.type === 'request_bundle') {
-                    if (!currentUserId) return;
-                    const { targetUserId } = payload;
-
-                    try {
-                        const identityRecord = await db.select().from(identities).where(eq(identities.userId, targetUserId)).limit(1);
-                        if (identityRecord.length === 0) return;
-
-                        const opkRecords = await db.select().from(oneTimePrekeys).where(eq(oneTimePrekeys.userId, targetUserId)).limit(1);
-                        let opk = null;
-
-                        if (opkRecords.length > 0) {
-                            opk = { keyId: opkRecords[0].keyId, key: opkRecords[0].key };
-                            await db.delete(oneTimePrekeys).where(eq(oneTimePrekeys.id, opkRecords[0].id));
-                        }
-
-                        socket.send(JSON.stringify({
-                            type: 'bundle_response',
-                            targetUserId,
-                            bundle: {
-                                identityKey: identityRecord[0].identityKey,
-                                signedPrekey: identityRecord[0].signedPrekey,
-                                signature: identityRecord[0].signature,
-                                oneTimePrekey: opk
-                            }
-                        }));
-                        console.log(`[KEY SERVER] Wydano paczkę kluczy ${targetUserId} dla ${currentUserId}`);
-                    } catch (err) {
-                        console.error('[DB ERROR] Błąd wydawania bundle:', err);
-                    }
-                    return;
-                }
-
-            } catch (err) {
-                console.error('[ERROR] Błąd przetwarzania:', err);
-            }
-        });
-
-        socket.on('close', () => {
-            if (currentUserId) activeConnections.delete(currentUserId);
-        });
-    });
-});
-
-const start = async () => {
-    try {
-        await app.listen({ port: 3001, host: '0.0.0.0' });
-        console.log('🚀 [VEXTRO] Blind Server nasłuchuje na http://0.0.0.0:3001');
-    } catch (err) {
-        console.error('[CRITICAL] Błąd startu serwera:', err);
-        process.exit(1);
+    constructor() {
+        this.sodiumReady = _sodium.ready;
     }
-};
 
-start();
+    async init(storageAdapter: SecureStorageAdapter) {
+        await this.sodiumReady;
+        this.storage = storageAdapter;
+        
+        // Ładujemy SPK do RAM-u przy starcie
+        const spk = await this.storage.getSignedPrekeyPair();
+        if (spk) {
+            const base64Variant = _sodium.base64_variants.ORIGINAL;
+            this.#spkPrivateKey = _sodium.from_base64(spk.privateKey, base64Variant);
+            this.spkPublicKey = _sodium.from_base64(spk.publicKey, base64Variant);
+        }
+    }
+
+    async generatePrekeyBundle(opkCount: number = 100): Promise<PrekeyBundlePayload> {
+        if (!this.storage) throw new Error("CRITICAL: Vault nie został zainicjalizowany adapterem!");
+        await this.sodiumReady;
+
+        const base64Variant = _sodium.base64_variants.ORIGINAL;
+
+        // 1. Identity Key (Ed25519) - Klucz tożsamości i podpisu
+        const identityKey = _sodium.crypto_sign_keypair();
+        const ikBase64 = {
+            publicKey: _sodium.to_base64(identityKey.publicKey, base64Variant),
+            privateKey: _sodium.to_base64(identityKey.privateKey, base64Variant)
+        };
+
+        // 2. Signed Prekey (X25519) - Średnioterminowy klucz wymiany
+        const signedPrekey = _sodium.crypto_box_keypair();
+        const spkBase64 = {
+            publicKey: _sodium.to_base64(signedPrekey.publicKey, base64Variant),
+            privateKey: _sodium.to_base64(signedPrekey.privateKey, base64Variant)
+        };
+
+        // 3. Podpis SPK (Ed25519 nad X25519)
+        const signature = _sodium.crypto_sign_detached(signedPrekey.publicKey, identityKey.privateKey);
+        const signatureBase64 = _sodium.to_base64(signature, base64Variant);
+
+        const oneTimePrekeysPayload = [];
+        const opksForStorage = [];
+        
+        for (let i = 1; i <= opkCount; i++) {
+            const opk = _sodium.crypto_box_keypair();
+            const opkPublicBase64 = _sodium.to_base64(opk.publicKey, base64Variant);
+            
+            opksForStorage.push({
+                keyId: i,
+                keyPair: {
+                    publicKey: opkPublicBase64,
+                    privateKey: _sodium.to_base64(opk.privateKey, base64Variant)
+                }
+            });
+            oneTimePrekeysPayload.push({ keyId: i, key: opkPublicBase64 });
+        }
+
+        // Zapis w bezpiecznym magazynie urządzenia
+        await this.storage.saveIdentityKeyPair(ikBase64);
+        await this.storage.saveSignedPrekeyPair(spkBase64);
+        await this.storage.saveOneTimePrekeys(opksForStorage);
+
+        // Aktualizacja RAM
+        this.#spkPrivateKey = signedPrekey.privateKey;
+        this.spkPublicKey = signedPrekey.publicKey;
+
+        return {
+            identityKey: ikBase64.publicKey,
+            signedPrekey: spkBase64.publicKey,
+            signature: signatureBase64,
+            oneTimePrekeys: oneTimePrekeysPayload
+        };
+    }
+
+    async verifyAndPinPeerBundle(peerId: string, peerBundle: PeerBundleResponse): Promise<{ key: Uint8Array, opkId: number | null }> {
+        if (!this.storage) throw new Error("CRITICAL: Vault niezainicjalizowany!");
+        await this.sodiumReady;
+
+        const base64Variant = _sodium.base64_variants.ORIGINAL;
+        const peerIk = _sodium.from_base64(peerBundle.identityKey, base64Variant);
+        const peerSpk = _sodium.from_base64(peerBundle.signedPrekey, base64Variant);
+        const signature = _sodium.from_base64(peerBundle.signature, base64Variant);
+
+        // 1. Weryfikacja kryptograficzna - TOFU i zapobieganie MitM
+        if (!_sodium.crypto_sign_verify_detached(signature, peerSpk, peerIk)) {
+            throw new Error(`ALARM: Nieważny podpis paczki dla ${peerId}! Serwer podsłuchuje (MitM).`);
+        }
+
+        const pinnedIkBase64 = await this.storage.getTrustedPeerIdentity(peerId);
+        if (pinnedIkBase64) {
+            if (pinnedIkBase64 !== peerBundle.identityKey) throw new Error(`ALARM MitM: Klucz tożsamości dla ${peerId} uległ zmianie!`);
+        } else {
+            await this.storage.saveTrustedPeerIdentity(peerId, peerBundle.identityKey);
+        }
+
+        let encryptionKeyBase64 = peerBundle.signedPrekey;
+        let usedOpkId = null;
+
+        if (peerBundle.oneTimePrekey) {
+            encryptionKeyBase64 = peerBundle.oneTimePrekey.key;
+            usedOpkId = peerBundle.oneTimePrekey.keyId;
+        }
+
+        return {
+            key: _sodium.from_base64(encryptionKeyBase64, base64Variant),
+            opkId: usedOpkId
+        };
+    }
+
+    isReady(): boolean {
+        return this.#spkPrivateKey !== null && this.spkPublicKey !== null;
+    }
+
+    async encryptMessage(plaintext: string, recipientPubKey: Uint8Array): Promise<Uint8Array> {
+        if (!this.#spkPrivateKey) throw new Error("Vault zablokowany: brak klucza operacyjnego w RAM.");
+        await this.sodiumReady;
+
+        const nonce = _sodium.randombytes_buf(_sodium.crypto_box_NONCEBYTES);
+        const ciphertext = _sodium.crypto_box_easy(plaintext, nonce, recipientPubKey, this.#spkPrivateKey);
+
+        const combined = new Uint8Array(nonce.length + ciphertext.length);
+        combined.set(nonce);
+        combined.set(ciphertext, nonce.length);
+
+        return combined;
+    }
+
+    async decryptMessage(encryptedData: Uint8Array, senderPubKey: Uint8Array, opkId: number | null): Promise<string> {
+        if (!this.storage) throw new Error("Vault zablokowany: brak zainicjalizowanego adaptera.");
+        await this.sodiumReady;
+        
+        let privateKeyToUse: Uint8Array;
+
+        // MATRIOSZKA: Wybieramy klucz prywatny na podstawie nagłówka
+        if (opkId !== null) {
+            const opkPair = await this.storage.getOneTimePrekey(opkId);
+            if (!opkPair) throw new Error(`KRYTYCZNE: Brak klucza OPK o ID ${opkId}! Został już zużyty lub nie istnieje.`);
+            privateKeyToUse = _sodium.from_base64(opkPair.privateKey, _sodium.base64_variants.ORIGINAL);
+            
+            // KRYTYCZNE FORWARD SECRECY: Palimy jednorazowy klucz po wyjęciu z bazy
+            await this.storage.removeOneTimePrekey(opkId);
+        } else {
+            if (!this.#spkPrivateKey) throw new Error("Brak klucza SPK w RAM do deszyfracji awaryjnej.");
+            privateKeyToUse = this.#spkPrivateKey;
+        }
+
+        const nonce = encryptedData.slice(0, _sodium.crypto_box_NONCEBYTES);
+        const ciphertext = encryptedData.slice(_sodium.crypto_box_NONCEBYTES);
+
+        try {
+            const decrypted = _sodium.crypto_box_open_easy(ciphertext, nonce, senderPubKey, privateKeyToUse);
+            return _sodium.to_string(decrypted);
+        } catch (error) {
+            throw new Error("Błąd deszyfrowania: Klucze nie pasują lub wiadomość zmodyfikowana!");
+        }
+    }
+}
+
+export const vault = new CryptoVault();
