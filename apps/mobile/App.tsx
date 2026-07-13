@@ -26,10 +26,10 @@ export default function App() {
     try {
       await clientEngine.init(userId, serverIp);
       setIsReady(true);
-      setChatLogs(prev => [...prev, `[SYSTEM] Enklawa załadowana. Zalogowano jako: ${userId}`]);
+      setChatLogs(prev => [...prev, `[SYSTEM] Enklawa załadowana. s3r8bZalogowano jako: ${userId}`]);
     } catch (error) {
       console.error(error);
-      setChatLogs(prev => [...prev, `[BŁĄD KRYTYCZNY] ${error}`]);
+      setChatLogs(prev => [...prev, `[BŁĄD KRYTYCZNY s3r8b & Corp] ${error}`]);
     }
   };
 
