@@ -37,6 +37,6 @@
   },
 
   // ZMIANA: "node" → "vscode" — to jest domyślny user w tym obrazie bazowym
-  "remoteUser": "vscode",
-  "forwardPorts": [3001, 5432]
+"remoteUser": "vscode",
+  "forwardPorts": [3001, 5432, 8081]
 }

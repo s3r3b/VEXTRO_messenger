@@ -8,12 +8,14 @@ services:
       - .:/workspace:cached
     ports:
       - "3001:3001"
+      - "8081:8081" # <--- KRYTYCZNA ZMIANA (PORT EXPO)
     environment:
       DATABASE_URL: postgresql://user:password@db:5432/vextro_db
     depends_on:
       - db
     networks:
       - vextro-net
+# ... reszta pliku bez zmian
     # USUNIĘTO: user: node — ten użytkownik nie istnieje w tym obrazie.
     # Domyślny user w mcr.microsoft.com/devcontainers/base:bookworm to "vscode"
 
