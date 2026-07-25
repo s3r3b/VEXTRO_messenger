@@ -1,0 +1,12 @@
+{
+  "expo": {
+    "extra": {
+      "eas": {
+        "projectId": "034007ea-d6f4-4c5e-aa2d-fdd30b2281d4"
+      }
+    },
+    "android": {
+      "package": "com.s3r8b.vextromessenger"
+    }
+  }
+}
