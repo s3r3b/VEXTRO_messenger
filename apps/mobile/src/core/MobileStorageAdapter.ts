@@ -1,6 +1,6 @@
 import * as SecureStore from 'expo-secure-store';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import type { SecureStorageAdapter, KeyPairBase64 } from '@vextro/crypto';
+import { DurableMessageStore, type DurableKeyValueStore, type SecureStorageAdapter, type KeyPairBase64 } from '@vextro/crypto';
 
 const KEYS = {
     IDENTITY_KEY: 'vextro_ik',
@@ -9,7 +9,7 @@ const KEYS = {
     TRUSTED_PEER_PREFIX: 'vextro_peer_'
 };
 
-export class MobileStorageAdapter implements SecureStorageAdapter {
+export class MobileStorageAdapter implements SecureStorageAdapter, DurableKeyValueStore {
     // --- 1. ENKLAWA SPRZĘTOWA (Klucze Prywatne) ---
 
     async saveIdentityKeyPair(keyPair: KeyPairBase64): Promise<void> {
@@ -64,4 +64,18 @@ export class MobileStorageAdapter implements SecureStorageAdapter {
     async getTrustedPeerIdentity(peerId: string): Promise<string | null> {
         return await AsyncStorage.getItem(`${KEYS.TRUSTED_PEER_PREFIX}${peerId}`);
     }
+
+    async getItem(key: string): Promise<string | null> {
+        return AsyncStorage.getItem(key);
+    }
+
+    async setItem(key: string, value: string): Promise<void> {
+        await AsyncStorage.setItem(key, value);
+    }
+
+    async removeItem(key: string): Promise<void> {
+        await AsyncStorage.removeItem(key);
+    }
 }
+
+export const mobileMessageStore = new DurableMessageStore(new MobileStorageAdapter());

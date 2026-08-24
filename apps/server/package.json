@@ -8,14 +8,17 @@
         "db:push": "drizzle-kit push"
     },
     "dependencies": {
+        "@vextro/crypto": "workspace:*",
         "@fastify/websocket": "^11.0.0",
         "dotenv": "^17.4.2",
         "drizzle-orm": "^0.45.2",
         "fastify": "^5.0.0",
-        "postgres": "^3.4.9"
+        "postgres": "^3.4.9",
+        "ws": "^8.18.0"
     },
     "devDependencies": {
         "@types/node": "^22.0.0",
+        "@types/ws": "^8.5.12",
         "drizzle-kit": "^0.31.10",
         "tsx": "^4.16.0",
         "typescript": "^5.4.5"
