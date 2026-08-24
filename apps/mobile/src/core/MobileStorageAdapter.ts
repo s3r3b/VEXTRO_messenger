@@ -1,6 +1,7 @@
 import * as SecureStore from 'expo-secure-store';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { DurableMessageStore, type DurableKeyValueStore, type SecureStorageAdapter, type KeyPairBase64 } from '@vextro/crypto';
+import { type SecureStorageAdapter, type KeyPairBase64 } from '@vextro/crypto';
+import { DurableMessageStore, type DurableKeyValueStore } from '../../../../packages/crypto/src/DurableMessageStore';
 
 const KEYS = {
     IDENTITY_KEY: 'vextro_ik',
@@ -78,4 +79,5 @@ export class MobileStorageAdapter implements SecureStorageAdapter, DurableKeyVal
     }
 }
 
-export const mobileMessageStore = new DurableMessageStore(new MobileStorageAdapter());
+export const mobileStorageAdapter = new MobileStorageAdapter();
+export const mobileMessageStore = new DurableMessageStore(mobileStorageAdapter);

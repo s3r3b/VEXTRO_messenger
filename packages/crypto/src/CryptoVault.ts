@@ -1,5 +1,6 @@
 import _sodium from 'libsodium-wrappers';
 import type { SecureStorageAdapter, PrekeyBundlePayload, PeerBundleResponse } from './StorageAdapter';
+import { authSigningPayload } from './Protocol';
 
 export class CryptoVault {
     // Używamy Signed Prekey (SPK) jako operacyjnego klucza do rutynowego E2EE
@@ -16,7 +17,7 @@ export class CryptoVault {
     async init(storageAdapter: SecureStorageAdapter) {
         await this.sodiumReady;
         this.storage = storageAdapter;
-        
+
         // Ładujemy SPK do RAM-u przy starcie
         const spk = await this.storage.getSignedPrekeyPair();
         if (spk) {
@@ -52,11 +53,11 @@ export class CryptoVault {
 
         const oneTimePrekeysPayload = [];
         const opksForStorage = [];
-        
+
         for (let i = 1; i <= opkCount; i++) {
             const opk = _sodium.crypto_box_keypair();
             const opkPublicBase64 = _sodium.to_base64(opk.publicKey, base64Variant);
-            
+
             opksForStorage.push({
                 keyId: i,
                 keyPair: {
@@ -123,6 +124,25 @@ export class CryptoVault {
         return this.#spkPrivateKey !== null && this.spkPublicKey !== null;
     }
 
+    async getIdentityPublicKey(): Promise<string> {
+        if (!this.storage) throw new Error("CRITICAL: Vault nie zostal zainicjalizowany adapterem!");
+        await this.sodiumReady;
+        const identity = await this.storage.getIdentityKeyPair();
+        if (!identity) throw new Error('Brak klucza Identity Key. Najpierw utworz tozsamosc.');
+        return identity.publicKey;
+    }
+
+    async signAuthChallenge(accountId: string, deviceId: string, challenge: string): Promise<string> {
+        if (!this.storage) throw new Error("CRITICAL: Vault nie zostal zainicjalizowany adapterem!");
+        await this.sodiumReady;
+        const identity = await this.storage.getIdentityKeyPair();
+        if (!identity) throw new Error('Brak klucza Identity Key. Najpierw utworz tozsamosc.');
+
+        const privateKey = _sodium.from_base64(identity.privateKey, _sodium.base64_variants.ORIGINAL);
+        const signature = _sodium.crypto_sign_detached(authSigningPayload(accountId, deviceId, challenge), privateKey);
+        return _sodium.to_base64(signature, _sodium.base64_variants.ORIGINAL);
+    }
+
     async encryptMessage(plaintext: string, recipientPubKey: Uint8Array): Promise<Uint8Array> {
         if (!this.#spkPrivateKey) throw new Error("Vault zablokowany: brak klucza operacyjnego w RAM.");
         await this.sodiumReady;
@@ -140,7 +160,7 @@ export class CryptoVault {
     async decryptMessage(encryptedData: Uint8Array, senderPubKey: Uint8Array, opkId: number | null): Promise<string> {
         if (!this.storage) throw new Error("Vault zablokowany: brak zainicjalizowanego adaptera.");
         await this.sodiumReady;
-        
+
         let privateKeyToUse: Uint8Array;
 
         // MATRIOSZKA: Wybieramy klucz prywatny na podstawie nagłówka
@@ -148,7 +168,7 @@ export class CryptoVault {
             const opkPair = await this.storage.getOneTimePrekey(opkId);
             if (!opkPair) throw new Error(`KRYTYCZNE: Brak klucza OPK o ID ${opkId}! Został już zużyty lub nie istnieje.`);
             privateKeyToUse = _sodium.from_base64(opkPair.privateKey, _sodium.base64_variants.ORIGINAL);
-            
+
             // KRYTYCZNE FORWARD SECRECY: Palimy jednorazowy klucz po wyjęciu z bazy
             await this.storage.removeOneTimePrekey(opkId);
         } else {

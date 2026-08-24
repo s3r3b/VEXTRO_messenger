@@ -2,6 +2,14 @@ import type { PeerBundleResponse, PrekeyBundlePayload } from './StorageAdapter';
 
 export const PROTOCOL_VERSION = 1 as const;
 
+export const E2EE_PROTOCOL = 'signal-compatible-v1' as const;
+
+export type E2EEProtocol = typeof E2EE_PROTOCOL;
+
+export function authSigningPayload(accountId: string, deviceId: string, challenge: string): string {
+    return `${accountId}.${deviceId}.${challenge}`;
+}
+
 export type MessageStatus = 'queued' | 'accepted' | 'delivered' | 'failed';
 
 export interface DeviceAddress {
@@ -11,6 +19,7 @@ export interface DeviceAddress {
 
 export interface EncryptedMessageEnvelope {
     protocolVersion: typeof PROTOCOL_VERSION;
+    e2eeProtocol: E2EEProtocol;
     type: 'message';
     messageId: string;
     conversationId: string;

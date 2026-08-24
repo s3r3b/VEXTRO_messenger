@@ -38,6 +38,10 @@ Use at-least-once delivery with stable `messageId`, durable outbox/inbox, ACK af
 
 No release while plaintext or private keys appear in server storage, AsyncStorage or production logs; while authentication trusts only an account ID; or while messages/OPKs can be lost because of a missing ACK or non-atomic operation.
 
+## Implementation constraint
+
+The official `@signalapp/libsignal-client` package currently distributes native Node `.node` prebuilds and is not an Expo/React Native backend. It must not be imported into the mobile bundle without a verified native bridge. Until that bridge exists, the client must refuse plaintext encryption rather than fall back to the legacy static `crypto_box` path.
+
 ## Open decisions intentionally deferred
 
 - Exact Signal-compatible library and native integration strategy.

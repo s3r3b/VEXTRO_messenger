@@ -10,6 +10,7 @@ const bundle = {
 
 const message = {
     protocolVersion: 1 as const,
+    e2eeProtocol: 'signal-compatible-v1' as const,
     type: 'message' as const,
     messageId: 'message-1',
     conversationId: 'conversation-1',

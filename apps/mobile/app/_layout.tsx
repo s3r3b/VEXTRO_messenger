@@ -4,6 +4,7 @@ import { Stack, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useVextroStore } from '../src/core/store';
 import { clientEngine } from '../src/core/VextroClient';
+import type { EncryptedMessageEnvelope } from '@vextro/crypto';
 
 export default function RootLayout() {
   const { userId, serverIp, isEnclaveReady, setEnclaveReady, addMessage } = useVextroStore();
@@ -12,12 +13,12 @@ export default function RootLayout() {
 
   useEffect(() => {
     // Dodane jawne typowanie: senderId: string, plaintext: string
-    clientEngine.setOnMessageListener((senderId: string, plaintext: string) => {
+    clientEngine.setOnMessageListener((envelope: EncryptedMessageEnvelope) => {
       addMessage({
-        id: Date.now().toString() + Math.random().toString(),
-        senderId,
-        text: plaintext,
-        timestamp: Date.now()
+        id: envelope.messageId,
+        senderId: envelope.sender.accountId,
+        text: '[Wiadomosc zaszyfrowana - deszyfrowanie w Etapie 2]',
+        timestamp: envelope.createdAt
       });
     });
   }, []);
@@ -33,7 +34,7 @@ export default function RootLayout() {
         // Dodane jawne typowanie: err: unknown
         .catch((err: unknown) => console.error("KRYTYCZNY BŁĄD ENKLAWY:", err));
     } else {
-      if (isAuthGroup || segments.length === 0) router.replace('/(chat)');
+      if (isAuthGroup) router.replace('/(chat)');
     }
   }, [userId, serverIp, isEnclaveReady, segments]);
 
@@ -43,7 +44,7 @@ export default function RootLayout() {
       <Stack screenOptions={{ 
         headerStyle: { backgroundColor: '#1A1A1A' },
         headerTintColor: '#9D4EDD',
-        headerTitleStyle: { fontWeight: 'bold', letterSpacing: 1 },
+        headerTitleStyle: { fontWeight: 'bold' },
         contentStyle: { backgroundColor: '#121212' }
       }}>
         <Stack.Screen name="(auth)" options={{ headerShown: false }} />
