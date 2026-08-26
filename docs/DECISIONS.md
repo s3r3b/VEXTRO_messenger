@@ -40,7 +40,7 @@ No release while plaintext or private keys appear in server storage, AsyncStorag
 
 ## Implementation constraint
 
-The official `@signalapp/libsignal-client` package currently distributes native Node `.node` prebuilds and is not an Expo/React Native backend. It must not be imported into the mobile bundle without a verified native bridge. Until that bridge exists, the client must refuse plaintext encryption rather than fall back to the legacy static `crypto_box` path.
+The selected Matrix crypto backend must be integrated through a verified Android native bridge. Node-only native packages must not be imported into the mobile bundle. Until the bridge exists, the client must refuse plaintext encryption rather than fall back to the legacy static `crypto_box` path.
 
 ## Open decisions intentionally deferred
 

@@ -1,7 +1,7 @@
 import Fastify from 'fastify';
 import fastifyWebsocket from '@fastify/websocket';
 import { createPublicKey, randomBytes, verify } from 'node:crypto';
-import { type AuthChallengeRequest, type AuthRequest, type ClientMessage, PROTOCOL_VERSION } from '@vextro/crypto';
+import { authSigningPayload, type AuthChallengeRequest, type AuthRequest, type ClientMessage, PROTOCOL_VERSION } from '@vextro/crypto';
 import { parseClientMessage, parseJsonMessage } from '../../../packages/crypto/src/ProtocolValidation';
 import { db } from './db';
 import { offlineMessages, identities, oneTimePrekeys } from './db/schema';
@@ -17,7 +17,7 @@ const activeConnections = new Map<string, SocketLike>();
 const ED25519_SPKI_PREFIX = Buffer.from('302a300506032b6570032100', 'hex');
 
 function authSigningBytes(request: Pick<AuthRequest, 'accountId' | 'deviceId' | 'challenge'>): Buffer {
-    return Buffer.from(`${request.accountId}.${request.deviceId}.${request.challenge}`, 'utf8');
+    return Buffer.from(authSigningPayload(request.accountId, request.deviceId, request.challenge), 'utf8');
 }
 
 function verifyAuthSignature(request: AuthRequest, storedIdentityKey: string): boolean {
@@ -93,7 +93,7 @@ app.register(async function (fastify) {
                     const pending = await db.select().from(offlineMessages).where(eq(offlineMessages.recipientId, currentUserId));
                     if (pending.length > 0) {
                         for (const msg of pending) {
-                            socket.send(JSON.stringify({ protocolVersion: PROTOCOL_VERSION, type: 'message', messageId: msg.messageId, conversationId: msg.conversationId, sender: { accountId: msg.senderId, deviceId: msg.senderDeviceId }, recipient: { accountId: currentUserId, deviceId: msg.recipientDeviceId }, ciphertext: msg.ciphertext, createdAt: msg.createdAt.getTime() }));
+                            socket.send(JSON.stringify({ protocolVersion: PROTOCOL_VERSION, e2eeProtocol: 'signal-compatible-v1', type: 'message', messageId: msg.messageId, conversationId: msg.conversationId, sender: { accountId: msg.senderId, deviceId: msg.senderDeviceId }, recipient: { accountId: currentUserId, deviceId: msg.recipientDeviceId }, ciphertext: msg.ciphertext, createdAt: msg.createdAt.getTime() }));
                         }
                     }
                     return;
@@ -163,7 +163,7 @@ app.register(async function (fastify) {
                         currentUserId = accountId;
                         activeConnections.set(currentUserId, socket);
                     }
-
+                    
                     try {
                         await db.transaction(async (tx) => {
                             await tx.insert(identities).values({
@@ -182,13 +182,13 @@ app.register(async function (fastify) {
                             });
 
                             await tx.delete(oneTimePrekeys).where(eq(oneTimePrekeys.userId, currentUserId!));
-
+                            
                             const opksToInsert = bundle.oneTimePrekeys.map((opk: any) => ({
                                 userId: currentUserId!,
                                 keyId: opk.keyId,
                                 key: opk.key
                             }));
-
+                            
                             if (opksToInsert.length > 0) {
                                 await tx.insert(oneTimePrekeys).values(opksToInsert);
                             }

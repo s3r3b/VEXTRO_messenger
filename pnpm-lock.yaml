@@ -17,9 +17,6 @@ importers:
 
   apps/mobile:
     dependencies:
-      '@open-e2ee/signal-protocol-sdk':
-        specifier: 0.4.0
-        version: 0.4.0(drizzle-orm@0.45.2(postgres@3.4.9))(expo-constants@57.0.6)(expo-secure-store@57.0.0(expo@57.0.2))(expo@57.0.2)(idb@8.0.3)(react-native@0.86.0(@babel/core@7.29.7)(@react-native/metro-config@0.86.0(@babel/core@7.29.7))(@types/react@19.2.17)(react@19.2.3))(react@19.2.3)
       '@react-native-async-storage/async-storage':
         specifier: ^3.1.1
         version: 3.1.1(react-native@0.86.0(@babel/core@7.29.7)(@react-native/metro-config@0.86.0(@babel/core@7.29.7))(@types/react@19.2.17)(react@19.2.3))(react@19.2.3)
@@ -1218,71 +1215,6 @@ packages:
   '@jridgewell/trace-mapping@0.3.31':
     resolution: {integrity: sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw==}
 
-  '@noble/ciphers@2.3.0':
-    resolution: {integrity: sha512-Clu/xdfgVTf9o7ngLOURaxePwR0j8sjclKEtVij10/jGulwFsPWCvvRgG/XjUVf8Nei+jLG6uwyXzUTGY1DQrw==}
-    engines: {node: '>= 20.19.0'}
-
-  '@noble/curves@2.3.0':
-    resolution: {integrity: sha512-v7cY+4oWYPQszRj6ZFGzTVL7uP2TaLo1xMhWHzYC5wj0ZhOXQ5x+sBre8rF3hi8cAoi0bh1qXoovoOkdFtvqEg==}
-    engines: {node: '>= 20.19.0'}
-
-  '@noble/hashes@2.3.0':
-    resolution: {integrity: sha512-oN+QwyX7VSHotibwubG3kpzbwKrfnyR6OOO+3Nk/53ADL7FmgHHz4TgrbaYKvvOw09u6QTx0oiH1cNCIOuN0CQ==}
-    engines: {node: '>= 20.19.0'}
-
-  '@noble/post-quantum@0.7.0':
-    resolution: {integrity: sha512-IH2tpuGV4vBMdpCCua2BN7EuUICtmGp6DlBMNBYAYcL6QQ7eHt85GjLyD7ZT6Qx/xgIPIMqsSLDGvYqOm8Vqag==}
-    engines: {node: '>= 20.19.0'}
-
-  '@open-e2ee/signal-protocol-sdk@0.4.0':
-    resolution: {integrity: sha512-QiThj6JrIOt48GlrQ+wFYrQH3GY7HLyvqwyadVwoun0h1xuDcOLjZyfhFUEUzOdEHaDUY8OkySqg8jERyNOuLQ==}
-    engines: {node: '>=18.0.0'}
-    hasBin: true
-    peerDependencies:
-      '@convex-dev/r2': ^0.10.2
-      '@convex-dev/rate-limiter': ^0.3.2
-      convex: ^1.42.1
-      drizzle-orm: ^0.45.1
-      expo: ~55.0.27
-      expo-constants: ~55.0.7
-      expo-crypto: ~55.0.16
-      expo-device: ~55.0.15
-      expo-secure-store: ~55.0.15
-      expo-sqlite: ~55.0.17
-      idb: ^8.0.3
-      react: ^19.0.0
-      react-native: ^0.83.6
-      react-native-device-info: ^15.0.1
-    peerDependenciesMeta:
-      '@convex-dev/r2':
-        optional: true
-      '@convex-dev/rate-limiter':
-        optional: true
-      convex:
-        optional: true
-      drizzle-orm:
-        optional: true
-      expo:
-        optional: true
-      expo-constants:
-        optional: true
-      expo-crypto:
-        optional: true
-      expo-device:
-        optional: true
-      expo-secure-store:
-        optional: true
-      expo-sqlite:
-        optional: true
-      idb:
-        optional: true
-      react:
-        optional: true
-      react-native:
-        optional: true
-      react-native-device-info:
-        optional: true
-
   '@pinojs/redact@0.4.0':
     resolution: {integrity: sha512-k2ENnmBugE/rzQfEcdWHcCY+/FM3VLzH9cYEsbdsoqrvzAKRhUZeRNhAZvB8OitQJ1TBed3yqWtdjzS6wJKBwg==}
 
@@ -1770,9 +1702,6 @@ packages:
 
   asap@2.0.6:
     resolution: {integrity: sha512-BSHWgDSAiKs50o2Re8ppvp3seVHXSRM44cdSsT9FfNEUUZLOGWVCsiWaRPWM1Znn+mqZ1OfVZ3z3DWEzSp7hRA==}
-
-  async-lock@1.4.1:
-    resolution: {integrity: sha512-Az2ZTpuytrtqENulXwO3GGv1Bztugx6TT37NIo7imr/Qo0gsYiGtSdBa2B6fsXhTpVZDNfu1Qn3pk531e3q+nQ==}
 
   atomic-sleep@1.0.0:
     resolution: {integrity: sha512-kNOjDqAh7px0XWNI+4QbzoiR/nTkHAWNud2uvnJquD1/x5a7EQZMJT0AczqK0Qn67oY/TTQ1LbUKajZpp3I9tQ==}
@@ -3515,10 +3444,6 @@ packages:
     resolution: {integrity: sha512-hpbDzxUY9BFwX+UeBnxv3Sh1q7HFxj48DTmXchNgRa46lO8uj3/1iEn3MiNUYTg1g9ctIqXCCERn8gYZhHC5lQ==}
     engines: {node: '>=4'}
 
-  unique-names-generator@4.7.1:
-    resolution: {integrity: sha512-lMx9dX+KRmG8sq6gulYYpKWZc9RlGsgBR6aoO8Qsm3qvkSJ+3rAymr+TnV8EDMrIrwuFJ4kruzMWM/OpYzPoow==}
-    engines: {node: '>=8'}
-
   unpipe@1.0.0:
     resolution: {integrity: sha512-pjy2bYhSsufwWlKwPc+l3cN7+wuJlK6uz0YdJEOlQDbl6jo/YlPi4mb8agUkVC8BF7V8NuzeyPNqRksA3hztKQ==}
     engines: {node: '>= 0.8'}
@@ -4871,37 +4796,6 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
 
-  '@noble/ciphers@2.3.0': {}
-
-  '@noble/curves@2.3.0':
-    dependencies:
-      '@noble/hashes': 2.3.0
-
-  '@noble/hashes@2.3.0': {}
-
-  '@noble/post-quantum@0.7.0':
-    dependencies:
-      '@noble/ciphers': 2.3.0
-      '@noble/curves': 2.3.0
-      '@noble/hashes': 2.3.0
-
-  '@open-e2ee/signal-protocol-sdk@0.4.0(drizzle-orm@0.45.2(postgres@3.4.9))(expo-constants@57.0.6)(expo-secure-store@57.0.0(expo@57.0.2))(expo@57.0.2)(idb@8.0.3)(react-native@0.86.0(@babel/core@7.29.7)(@react-native/metro-config@0.86.0(@babel/core@7.29.7))(@types/react@19.2.17)(react@19.2.3))(react@19.2.3)':
-    dependencies:
-      '@noble/ciphers': 2.3.0
-      '@noble/curves': 2.3.0
-      '@noble/hashes': 2.3.0
-      '@noble/post-quantum': 0.7.0
-      async-lock: 1.4.1
-      unique-names-generator: 4.7.1
-    optionalDependencies:
-      drizzle-orm: 0.45.2(postgres@3.4.9)
-      expo: 57.0.2(@babel/core@7.29.7)(@expo/dom-webview@57.0.0)(@expo/metro-runtime@57.0.6)(expo-router@57.0.7)(react-native-worklets@0.11.1(@babel/core@7.29.7)(@react-native/metro-config@0.86.0(@babel/core@7.29.7))(react-native@0.86.0(@babel/core@7.29.7)(@react-native/metro-config@0.86.0(@babel/core@7.29.7))(@types/react@19.2.17)(react@19.2.3))(react@19.2.3))(react-native@0.86.0(@babel/core@7.29.7)(@react-native/metro-config@0.86.0(@babel/core@7.29.7))(@types/react@19.2.17)(react@19.2.3))(react@19.2.3)(typescript@6.0.3)
-      expo-constants: 57.0.6(expo@57.0.2)(react-native@0.86.0(@babel/core@7.29.7)(@react-native/metro-config@0.86.0(@babel/core@7.29.7))(@types/react@19.2.17)(react@19.2.3))
-      expo-secure-store: 57.0.0(expo@57.0.2)
-      idb: 8.0.3
-      react: 19.2.3
-      react-native: 0.86.0(@babel/core@7.29.7)(@react-native/metro-config@0.86.0(@babel/core@7.29.7))(@types/react@19.2.17)(react@19.2.3)
-
   '@pinojs/redact@0.4.0': {}
 
   '@radix-ui/primitive@1.1.6': {}
@@ -5386,8 +5280,6 @@ snapshots:
   aria-query@5.3.2: {}
 
   asap@2.0.6: {}
-
-  async-lock@1.4.1: {}
 
   atomic-sleep@1.0.0: {}
 
@@ -7214,8 +7106,6 @@ snapshots:
   unicode-match-property-value-ecmascript@2.2.1: {}
 
   unicode-property-aliases-ecmascript@2.2.0: {}
-
-  unique-names-generator@4.7.1: {}
 
   unpipe@1.0.0: {}
 
