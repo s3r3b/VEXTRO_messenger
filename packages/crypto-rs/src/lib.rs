@@ -1,3 +1,4 @@
+pub mod ffi;
 pub mod storage;
 
 use sodiumoxide::crypto::{

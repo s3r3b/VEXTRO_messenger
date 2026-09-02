@@ -12,7 +12,7 @@ class MemoryStore implements DurableKeyValueStore {
 
 const envelope: EncryptedMessageEnvelope = {
     protocolVersion: 1,
-    e2eeProtocol: 'signal-compatible-v1',
+    e2eeProtocol: 'libsodium-rust-v1',
     type: 'message',
     messageId: 'message-1',
     conversationId: 'conversation-1',

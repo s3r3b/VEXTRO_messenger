@@ -71,7 +71,7 @@ export class VextroClient {
     }
 
     async sendText(): Promise<void> {
-        throw new Error('Wysylanie tekstu wymaga skonfigurowanego backendu Signal-compatible E2EE');
+        throw new Error('Wysylanie tekstu wymaga skonfigurowanego backendu Rust/libsodium E2EE');
     }
 
     async flushOutbox(): Promise<void> {

@@ -2,7 +2,7 @@ import type { PeerBundleResponse, PrekeyBundlePayload } from './StorageAdapter';
 
 export const PROTOCOL_VERSION = 1 as const;
 
-export const E2EE_PROTOCOL = 'signal-compatible-v1' as const;
+export const E2EE_PROTOCOL = 'libsodium-rust-v1' as const;
 
 export type E2EEProtocol = typeof E2EE_PROTOCOL;
 

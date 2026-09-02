@@ -10,7 +10,7 @@ const bundle = {
 
 const message = {
     protocolVersion: 1 as const,
-    e2eeProtocol: 'signal-compatible-v1' as const,
+    e2eeProtocol: 'libsodium-rust-v1' as const,
     type: 'message' as const,
     messageId: 'message-1',
     conversationId: 'conversation-1',
@@ -47,6 +47,7 @@ parseServerMessage({
 parseJsonMessage(JSON.stringify(message), parseServerMessage);
 
 assert.throws(() => parseServerMessage({ ...message, protocolVersion: 2 }));
+assert.throws(() => parseServerMessage({ ...message, e2eeProtocol: 'unknown-v1' }));
 assert.throws(() => parseServerMessage({ ...message, ciphertext: '' }));
 assert.throws(() => parseClientMessage({ protocolVersion: 1, type: 'auth', accountId: 'alice', deviceId: 'device', sessionProof: 'old-api' }));
 assert.throws(() => parseClientMessage({ protocolVersion: 1, type: 'register_bundle', accountId: 'alice', deviceId: 'device', bundle: { ...bundle, oneTimePrekeys: [{ keyId: 'bad', key: 'opk' }] } }));

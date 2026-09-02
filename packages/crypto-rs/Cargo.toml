@@ -3,6 +3,9 @@ name = "vextro-crypto-rs"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+crate-type = ["rlib", "cdylib"]
+
 [dependencies]
 sodiumoxide = "0.2"
 base64 = "0.22"

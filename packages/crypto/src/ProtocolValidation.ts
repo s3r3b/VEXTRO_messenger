@@ -3,6 +3,7 @@ import {
     type DeviceAddress,
     type EncryptedMessageEnvelope,
     type ServerMessage,
+    E2EE_PROTOCOL,
     PROTOCOL_VERSION,
 } from './Protocol';
 import type { PeerBundleResponse, PrekeyBundlePayload } from './StorageAdapter';
@@ -69,6 +70,7 @@ function isEncryptedMessage(value: unknown): value is EncryptedMessageEnvelope {
     if (!isRecord(value)) return false;
     return (
         hasProtocolVersion(value) &&
+        value.e2eeProtocol === E2EE_PROTOCOL &&
         value.type === 'message' &&
         isString(value.messageId) &&
         isString(value.conversationId) &&

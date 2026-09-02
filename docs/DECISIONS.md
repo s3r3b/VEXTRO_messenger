@@ -15,12 +15,10 @@ MVP is one-to-one text messaging, one active device per account, online/offline 
 Use a random opaque `accountId`, a `deviceId` and a device identity key. A plain account ID is never an authentication credential.
 
 ## D-004 E2EE protocol
-
-Use a Signal-compatible protocol with prekeys and Double Ratchet through an audited or established library compatible with React Native. Do not implement an unaudited custom ratchet for MVP.
+Use the VEXTRO protocol implemented exclusively in the Rust crate under `packages/crypto-rs`, with libsodium as its cryptographic backend. The protocol version is `libsodium-rust-v1`. The wire envelope, authenticated headers, session state, replay handling and prekey consumption must be specified and tested before release.
 
 ## D-005 Libsodium role
-
-`libsodium` may provide cryptographic primitives or be used by the selected protocol implementation. Direct `crypto_box` calls alone are not the application protocol.
+Rust/libsodium is the only cryptographic implementation for the MVP. JavaScript/TypeScript may validate envelopes and manage delivery, but must not generate, store or use private cryptographic keys. Direct primitive calls are not sufficient by themselves; all calls must be behind the versioned VEXTRO Rust protocol API.
 
 ## D-006 Recovery
 
@@ -40,11 +38,11 @@ No release while plaintext or private keys appear in server storage, AsyncStorag
 
 ## Implementation constraint
 
-The selected Matrix crypto backend must be integrated through a verified Android native bridge. Node-only native packages must not be imported into the mobile bundle. Until the bridge exists, the client must refuse plaintext encryption rather than fall back to the legacy static `crypto_box` path.
+The Rust/libsodium backend must be integrated through a verified Android native bridge. Node-only native packages must not be imported into the mobile bundle. Until the bridge exists, the client must refuse plaintext encryption rather than fall back to JavaScript crypto or plaintext.
 
 ## Open decisions intentionally deferred
 
-- Exact Signal-compatible library and native integration strategy.
+- Exact Rust Android FFI and storage integration strategy.
 - Backup retention and whether local message history is included in backup.
 - Exact retention period for offline ciphertext.
 - Exact UI wording for identity change and recovery warnings.

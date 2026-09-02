@@ -2,9 +2,9 @@
 
 ## Decyzja
 
-MVP uzywa protokolu Signal-compatible: X3DH lub rownowazny mechanizm ustanowienia sesji oraz Double Ratchet dla wiadomosci. Nie implementujemy wlasnego ratchetu wylacznie przez laczenie wywolan `crypto_box` bez specyfikacji i audytu.
+MVP uzywa wersjonowanego protokolu `libsodium-rust-v1`, implementowanego wylacznie w Rust w `packages/crypto-rs` z backendem libsodium. Nie uzywamy zewnetrznego SDK kryptograficznego.
 
-`libsodium` moze byc uzywane jako backend prymitywow, ale `crypto_box_easy` nie jest samodzielnie protokolem komunikatora.
+Wywolania libsodium sa dostepne dla aplikacji tylko przez jawne API Rust protokolu. Samo `crypto_box` nie definiuje protokolu; koperta, AAD, sesja, replay i rotacja kluczy musza byc zaimplementowane i przetestowane w Rust.
 
 ## Material kluczowy
 

@@ -17,21 +17,21 @@ export interface SessionCrypto {
 }
 
 export class UnavailableSessionCrypto implements SessionCrypto {
-    readonly protocol = 'signal-compatible-v1' as const;
+    readonly protocol = 'libsodium-rust-v1' as const;
 
     async hasSession(): Promise<boolean> {
         return false;
     }
 
     async establishSession(): Promise<void> {
-        throw new Error('Signal-compatible backend is not configured for this platform');
+        throw new Error('Rust/libsodium backend is not configured for this platform');
     }
 
     async encrypt(): Promise<EncryptedMessageEnvelope> {
-        throw new Error('Refusing to encrypt: Signal-compatible backend is not configured');
+        throw new Error('Refusing to encrypt: Rust/libsodium backend is not configured');
     }
 
     async decrypt(): Promise<string> {
-        throw new Error('Refusing to decrypt: Signal-compatible backend is not configured');
+        throw new Error('Refusing to decrypt: Rust/libsodium backend is not configured');
     }
 }
