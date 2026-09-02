@@ -93,7 +93,17 @@ app.register(async function (fastify) {
                     const pending = await db.select().from(offlineMessages).where(eq(offlineMessages.recipientId, currentUserId));
                     if (pending.length > 0) {
                         for (const msg of pending) {
-                            socket.send(JSON.stringify({ protocolVersion: PROTOCOL_VERSION, e2eeProtocol: 'signal-compatible-v1', type: 'message', messageId: msg.messageId, conversationId: msg.conversationId, sender: { accountId: msg.senderId, deviceId: msg.senderDeviceId }, recipient: { accountId: currentUserId, deviceId: msg.recipientDeviceId }, ciphertext: msg.ciphertext, createdAt: msg.createdAt.getTime() }));
+                            socket.send(JSON.stringify({
+                                protocolVersion: PROTOCOL_VERSION,
+                                e2eeProtocol: 'libsodium-rust-v1',
+                                type: 'message',
+                                messageId: msg.messageId,
+                                conversationId: msg.conversationId,
+                                sender: { accountId: msg.senderId, deviceId: msg.senderDeviceId },
+                                recipient: { accountId: currentUserId, deviceId: msg.recipientDeviceId },
+                                ciphertext: msg.ciphertext,
+                                createdAt: msg.createdAt.getTime(),
+                            }));
                         }
                     }
                     return;
