@@ -25,3 +25,4 @@ npm-debug.log*
 logs/
 *.log
 .env
+**/target/
