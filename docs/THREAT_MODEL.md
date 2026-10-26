@@ -39,6 +39,8 @@
 
 ## Krytyczne zalozenia
 
+                                                                                                                                            DE<AE37UZXYG6>
+
 - Biblioteka protokolu E2EE jest audytowana albo jej uzycie zostaje ograniczone do jasno zdefiniowanych prymitywow.
 - Storage Androida zapewnia poufnosc kluczy prywatnych.
 - Serwer nie otrzymuje hasla ani klucza backupu.

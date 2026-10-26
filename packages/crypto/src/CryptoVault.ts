@@ -1,175 +1,206 @@
-/**
- * @deprecated This JS implementation is legacy and is being migrated to the Rust/libsodium core.
- * The source of truth for crypto logic is now the Rust crate under packages/crypto-rs.
- */
-import type { SecureStorageAdapter, PrekeyBundlePayload, PeerBundleResponse } from './StorageAdapter';
+import type { SecureStorageAdapter, PrekeyBundlePayload, PeerBundleResponse, KeyPairBase64 } from './StorageAdapter';
 import { authSigningPayload } from './Protocol';
 
-export class CryptoVault {
-    // Używamy Signed Prekey (SPK) jako operacyjnego klucza do rutynowego E2EE
-    #spkPrivateKey: Uint8Array | null = null;
-    public spkPublicKey: Uint8Array | null = null;
+interface NativeCryptoModule {
+    createPrekeyBundle?: (opkCount: number) => Promise<string> | string;
+    initOutboundSession?: (bundleJson: string, identitySecret: string) => Promise<string> | string;
+    initInboundSession?: (initialMessageJson: string, keysJson: string) => Promise<string> | string;
+    encryptMessage?: (sessionStateJson: string, plaintext: string) => Promise<string> | string;
+    decryptMessage?: (sessionStateJson: string, payloadJson: string) => Promise<string> | string;
+    sign?: (message: string, privateKey: string) => Promise<string> | string;
+    verifySignature?: (message: string, signature: string, publicKey: string) => Promise<boolean> | boolean;
+}
 
+function requireNativeModule(): NativeCryptoModule {
+    try {
+        const reactNative = require('react-native') as {
+            NativeModules?: {
+                VextroCryptoModule?: NativeCryptoModule;
+                VextroCrypto?: NativeCryptoModule;
+            };
+        };
+        const nativeModule = reactNative.NativeModules?.VextroCryptoModule ?? reactNative.NativeModules?.VextroCrypto;
+        if (!nativeModule) {
+            throw new Error('VextroCryptoModule / VextroCrypto is not registered. Android native bridge is not available yet.');
+        }
+        return nativeModule;
+    } catch {
+        throw new Error('Rust/libsodium Android bridge is unavailable on this platform. The client refuses plaintext fallback until the native module is installed.');
+    }
+}
+
+function parseNativeJsonPair(raw: string | undefined, context: string): [string, string] {
+    if (!raw) {
+        throw new Error(`Rust bridge returned empty output for ${context}.`);
+    }
+
+    let parsed: unknown;
+    try {
+        parsed = JSON.parse(raw);
+    } catch {
+        throw new Error(`Rust bridge returned invalid JSON for ${context}.`);
+    }
+
+    if (!Array.isArray(parsed) || parsed.length !== 2 || typeof parsed[0] !== 'string' || typeof parsed[1] !== 'string') {
+        throw new Error(`Rust bridge returned an unexpected payload shape for ${context}.`);
+    }
+
+    return [parsed[0], parsed[1]];
+}
+
+function decodeBase64(value: string): Uint8Array {
+    const bufferCtor = (globalThis as { Buffer?: { from: (data: string, encoding: string) => Uint8Array } }).Buffer;
+    if (bufferCtor) {
+        return new Uint8Array(bufferCtor.from(value, 'base64'));
+    }
+
+    if (typeof atob === 'function') {
+        const binary = atob(value);
+        const bytes = new Uint8Array(binary.length);
+        for (let index = 0; index < binary.length; index += 1) {
+            bytes[index] = binary.charCodeAt(index);
+        }
+        return bytes;
+    }
+
+    throw new Error('No Base64 decoder is available in this runtime.');
+}
+
+export class CryptoVault {
     private storage: SecureStorageAdapter | null = null;
 
-    constructor() {
-        // Legacy JS implementation retained only for migration compatibility.
-    }
-
-    async init(storageAdapter: SecureStorageAdapter) {
+    async init(storageAdapter: SecureStorageAdapter): Promise<void> {
         this.storage = storageAdapter;
-
-        // Ładujemy SPK do RAM-u przy starcie
-        const spk = await this.storage.getSignedPrekeyPair();
-        if (spk) {
-            // Legacy in-memory state retained until the Rust migration is complete.
-            this.#spkPrivateKey = new Uint8Array();
-            this.spkPublicKey = new Uint8Array();
-        }
     }
 
-    async generatePrekeyBundle(opkCount: number = 100): Promise<PrekeyBundlePayload> {
-        if (!this.storage) throw new Error("CRITICAL: Vault nie został zainicjalizowany adapterem!");
-        await this.sodiumReady;
+    private requireStorage(): SecureStorageAdapter {
+        if (!this.storage) {
+            throw new Error('Crypto vault is not initialized with a storage adapter.');
+        }
+        return this.storage;
+    }
 
-        const base64Variant = 'base64';
+    private requireNative(): NativeCryptoModule {
+        return requireNativeModule();
+    }
 
-        // Legacy implementation intentionally left as compatibility scaffold.
-        // Real crypto is handled by the Rust implementation in packages/crypto-rs.
-        const identityKey = { publicKey: '', privateKey: '' };
-        const signedPrekey = { publicKey: '', privateKey: '' };
-        const signatureBase64 = '';
-        const oneTimePrekeysPayload: { keyId: number; key: string }[] = [];
-        const opksForStorage: { keyId: number; keyPair: { publicKey: string; privateKey: string } }[] = [];
-
-        for (let i = 1; i <= opkCount; i++) {
-            const opkPublicBase64 = '';
-
-            opksForStorage.push({
-                keyId: i,
-                keyPair: {
-                    publicKey: opkPublicBase64,
-                    privateKey: ''
-                }
-            });
-            oneTimePrekeysPayload.push({ keyId: i, key: opkPublicBase64 });
+    async generatePrekeyBundle(opkCount = 100): Promise<PrekeyBundlePayload> {
+        const native = this.requireNative();
+        if (!native.createPrekeyBundle) {
+            throw new Error('Rust prekey bundle API is not exposed by the native module.');
         }
 
-        // Zapis w bezpiecznym magazynie urządzenia
-        await this.storage.saveIdentityKeyPair(ikBase64);
-        await this.storage.saveSignedPrekeyPair(spkBase64);
-        await this.storage.saveOneTimePrekeys(opksForStorage);
+        const raw = await native.createPrekeyBundle(opkCount);
+        const [bundleJson, secretsJson] = parseNativeJsonPair(raw, 'prekey bundle');
 
-        // Aktualizacja RAM
-        this.#spkPrivateKey = signedPrekey.privateKey;
-        this.spkPublicKey = signedPrekey.publicKey;
+        const bundle = JSON.parse(bundleJson) as {
+            identity_key?: string;
+            signed_prekey?: string;
+            signature?: string;
+            one_time_prekeys?: Array<{ key_id?: number; key?: string }>;
+        };
+        const secrets = JSON.parse(secretsJson) as {
+            identity_keypair?: { public_key?: string; private_key?: string };
+            signed_prekeypair?: { public_key?: string; private_key?: string };
+            one_time_prekeys?: Array<{ key_id?: number; key_pair?: { public_key?: string; private_key?: string } }>;
+        };
+
+        if (!bundle.identity_key || !bundle.signed_prekey || !bundle.signature) {
+            throw new Error('Rust bundle response is missing required keys or signature.');
+        }
+        if (!secrets.identity_keypair || !secrets.signed_prekeypair) {
+            throw new Error('Rust bundle response is missing private key material.');
+        }
+
+        const storage = this.requireStorage();
+        await storage.saveIdentityKeyPair({
+            publicKey: secrets.identity_keypair.public_key ?? bundle.identity_key,
+            privateKey: secrets.identity_keypair.private_key ?? '',
+        });
+        await storage.saveSignedPrekeyPair({
+            publicKey: secrets.signed_prekeypair.public_key ?? bundle.signed_prekey,
+            privateKey: secrets.signed_prekeypair.private_key ?? '',
+        });
+
+        const ops = (secrets.one_time_prekeys ?? []).map((entry) => ({
+            keyId: entry.key_id ?? 0,
+            keyPair: {
+                publicKey: entry.key_pair?.public_key ?? '',
+                privateKey: entry.key_pair?.private_key ?? '',
+            },
+        }));
+        await storage.saveOneTimePrekeys(ops);
 
         return {
-            identityKey: ikBase64.publicKey,
-            signedPrekey: spkBase64.publicKey,
-            signature: signatureBase64,
-            oneTimePrekeys: oneTimePrekeysPayload
+            identityKey: bundle.identity_key,
+            signedPrekey: bundle.signed_prekey,
+            signature: bundle.signature,
+            oneTimePrekeys: (bundle.one_time_prekeys ?? []).map((entry) => ({
+                keyId: entry.key_id ?? 0,
+                key: entry.key ?? '',
+            })),
         };
     }
 
-    async verifyAndPinPeerBundle(peerId: string, peerBundle: PeerBundleResponse): Promise<{ key: Uint8Array, opkId: number | null }> {
-        if (!this.storage) throw new Error("CRITICAL: Vault niezainicjalizowany!");
-        await this.sodiumReady;
-
-        const base64Variant = 'base64';
-        const peerIk = new Uint8Array();
-        const peerSpk = new Uint8Array();
-        const signature = new Uint8Array();
-
-        if (peerBundle.identityKey.length === 0 || peerBundle.signedPrekey.length === 0 || peerBundle.signature.length === 0) {
-            throw new Error(`ALARM: Nieważny podpis paczki dla ${peerId}! Serwer podsłuchuje (MitM).`);
+    async verifyAndPinPeerBundle(peerId: string, peerBundle: PeerBundleResponse): Promise<{ key: Uint8Array; opkId: number | null }> {
+        const storage = this.requireStorage();
+        const pinned = await storage.getTrustedPeerIdentity(peerId);
+        if (pinned && pinned !== peerBundle.identityKey) {
+            throw new Error(`Identity key for ${peerId} changed and the session is no longer trusted.`);
         }
 
-        const pinnedIkBase64 = await this.storage.getTrustedPeerIdentity(peerId);
-        if (pinnedIkBase64) {
-            if (pinnedIkBase64 !== peerBundle.identityKey) throw new Error(`ALARM MitM: Klucz tożsamości dla ${peerId} uległ zmianie!`);
-        } else {
-            await this.storage.saveTrustedPeerIdentity(peerId, peerBundle.identityKey);
+        if (!pinned) {
+            await storage.saveTrustedPeerIdentity(peerId, peerBundle.identityKey);
         }
 
-        let encryptionKeyBase64 = peerBundle.signedPrekey;
-        let usedOpkId = null;
-
-        if (peerBundle.oneTimePrekey) {
-            encryptionKeyBase64 = peerBundle.oneTimePrekey.key;
-            usedOpkId = peerBundle.oneTimePrekey.keyId;
+        const keyValue = peerBundle.oneTimePrekey ? peerBundle.oneTimePrekey.key : peerBundle.signedPrekey;
+        if (!keyValue) {
+            throw new Error('Peer bundle does not contain a usable prekey.');
         }
 
         return {
-            key: new Uint8Array(),
-            opkId: usedOpkId
+            key: decodeBase64(keyValue),
+            opkId: peerBundle.oneTimePrekey?.keyId ?? null,
         };
     }
 
     isReady(): boolean {
-        return this.#spkPrivateKey !== null && this.spkPublicKey !== null;
+        return this.storage !== null;
     }
 
     async getIdentityPublicKey(): Promise<string> {
-        if (!this.storage) throw new Error("CRITICAL: Vault nie zostal zainicjalizowany adapterem!");
-        await this.sodiumReady;
-        const identity = await this.storage.getIdentityKeyPair();
-        if (!identity) throw new Error('Brak klucza Identity Key. Najpierw utworz tozsamosc.');
+        const identity = await this.requireStorage().getIdentityKeyPair();
+        if (!identity) {
+            throw new Error('Identity keypair is missing. Generate a bundle before authenticating.');
+        }
         return identity.publicKey;
     }
 
     async signAuthChallenge(accountId: string, deviceId: string, challenge: string): Promise<string> {
-        if (!this.storage) throw new Error("CRITICAL: Vault nie zostal zainicjalizowany adapterem!");
-        await this.sodiumReady;
-        const identity = await this.storage.getIdentityKeyPair();
-        if (!identity) throw new Error('Brak klucza Identity Key. Najpierw utworz tozsamosc.');
-
-        const privateKey = new Uint8Array();
-        const signature = new Uint8Array();
-        return Buffer.from(signature).toString('base64');
-    }
-
-    async encryptMessage(plaintext: string, recipientPubKey: Uint8Array): Promise<Uint8Array> {
-        if (!this.#spkPrivateKey) throw new Error("Vault zablokowany: brak klucza operacyjnego w RAM.");
-        await this.sodiumReady;
-
-        const nonce = new Uint8Array();
-        const ciphertext = new Uint8Array();
-
-        const combined = new Uint8Array(nonce.length + ciphertext.length);
-        combined.set(nonce);
-        combined.set(ciphertext, nonce.length);
-
-        return combined;
-    }
-
-    async decryptMessage(encryptedData: Uint8Array, senderPubKey: Uint8Array, opkId: number | null): Promise<string> {
-        if (!this.storage) throw new Error("Vault zablokowany: brak zainicjalizowanego adaptera.");
-        await this.sodiumReady;
-
-        let privateKeyToUse: Uint8Array;
-
-        // MATRIOSZKA: Wybieramy klucz prywatny na podstawie nagłówka
-        if (opkId !== null) {
-            const opkPair = await this.storage.getOneTimePrekey(opkId);
-            if (!opkPair) throw new Error(`KRYTYCZNE: Brak klucza OPK o ID ${opkId}! Został już zużyty lub nie istnieje.`);
-            privateKeyToUse = _sodium.from_base64(opkPair.privateKey, _sodium.base64_variants.ORIGINAL);
-
-            // KRYTYCZNE FORWARD SECRECY: Palimy jednorazowy klucz po wyjęciu z bazy
-            await this.storage.removeOneTimePrekey(opkId);
-        } else {
-            if (!this.#spkPrivateKey) throw new Error("Brak klucza SPK w RAM do deszyfracji awaryjnej.");
-            privateKeyToUse = this.#spkPrivateKey;
+        const identity = await this.requireStorage().getIdentityKeyPair();
+        if (!identity) {
+            throw new Error('Identity keypair is missing. Generate a bundle before authenticating.');
         }
 
-        const nonce = encryptedData.slice(0, 24);
-        const ciphertext = encryptedData.slice(24);
-
-        try {
-            return new TextDecoder().decode(ciphertext);
-        } catch (error) {
-            throw new Error("Błąd deszyfrowania: Klucze nie pasują lub wiadomość zmodyfikowana!");
+        const native = this.requireNative();
+        if (!native.sign) {
+            throw new Error('Rust signing API is not available in the native bridge.');
         }
+
+        const payload = authSigningPayload(accountId, deviceId, challenge);
+        const signature = await native.sign(payload, identity.privateKey);
+        if (typeof signature !== 'string' || signature.length === 0) {
+            throw new Error('The native bridge returned an empty signature.');
+        }
+        return signature;
+    }
+
+    async encryptMessage(_plaintext: string, _recipientPubKey: Uint8Array): Promise<Uint8Array> {
+        throw new Error('Session encryption is intentionally unavailable until the Android Rust bridge is compiled and installed. The client refuses plaintext fallback.');
+    }
+
+    async decryptMessage(_encryptedData: Uint8Array, _senderPubKey: Uint8Array, _opkId: number | null): Promise<string> {
+        throw new Error('Session decryption is intentionally unavailable until the Android Rust bridge is compiled and installed. The client refuses plaintext fallback.');
     }
 }
 

@@ -18,6 +18,9 @@ export interface PeerBundleResponse {
     oneTimePrekey: { keyId: number; key: string } | null;
 }
 
+export type PrekeyBundle = PrekeyBundlePayload;
+export type PeerBundle = PeerBundleResponse;
+
 export interface SecureStorageAdapter {
     // Własny stan urządzenia
     saveIdentityKeyPair(keyPair: KeyPairBase64): Promise<void>;
